@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <radialGradient id="radarGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#10b981" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#090d16" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="shieldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e293b"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+    <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10b981"/>
+      <stop offset="100%" stop-color="#059669"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background base rounded -->
+  <rect width="512" height="512" rx="128" fill="#090d16"/>
+  <rect x="16" y="16" width="480" height="480" rx="112" stroke="#1e293b" stroke-width="4" fill="url(#shieldGrad)"/>
+
+  <!-- Radar circles -->
+  <circle cx="256" cy="256" r="180" fill="url(#radarGlow)"/>
+  <circle cx="256" cy="256" r="160" stroke="#10b981" stroke-width="2" stroke-opacity="0.3" stroke-dasharray="8 8"/>
+  <circle cx="256" cy="256" r="110" stroke="#10b981" stroke-width="2" stroke-opacity="0.4"/>
+  <circle cx="256" cy="256" r="60" stroke="#10b981" stroke-width="2" stroke-opacity="0.6"/>
+
+  <!-- CCTV Crosshairs -->
+  <line x1="256" y1="70" x2="256" y2="442" stroke="#10b981" stroke-width="1.5" stroke-opacity="0.2"/>
+  <line x1="70" y1="256" x2="442" y2="256" stroke="#10b981" stroke-width="1.5" stroke-opacity="0.2"/>
+
+  <!-- CCTV Lens / Acoustic Wave Center -->
+  <circle cx="256" cy="256" r="42" fill="#090d16" stroke="#10b981" stroke-width="4"/>
+  <circle cx="256" cy="256" r="22" fill="#ef4444"/>
+  <circle cx="248" cy="248" r="7" fill="#ffffff" fill-opacity="0.7"/>
+
+  <!-- Sound Waves Left & Right -->
+  <path d="M190 220C170 230 170 282 190 292" stroke="#10b981" stroke-width="6" stroke-linecap="round"/>
+  <path d="M322 220C342 230 342 282 322 292" stroke="#10b981" stroke-width="6" stroke-linecap="round"/>
+
+  <path d="M160 196C130 216 130 296 160 316" stroke="#10b981" stroke-width="5" stroke-linecap="round" stroke-opacity="0.7"/>
+  <path d="M352 196C382 216 382 296 352 316" stroke="#10b981" stroke-width="5" stroke-linecap="round" stroke-opacity="0.7"/>
+
+  <!-- CCTV Badge corner -->
+  <rect x="200" y="380" width="112" height="28" rx="14" fill="#0f172a" stroke="#10b981" stroke-width="2"/>
+  <text x="256" y="399" font-family="system-ui, sans-serif" font-size="13" font-weight="800" fill="#10b981" text-anchor="middle" letter-spacing="2">CCTV AUDIO</text>
+</svg>

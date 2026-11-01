@@ -1,0 +1,14 @@
+{
+  "name": "SoundSentinel",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm",
+  "postCreateCommand": "npm install",
+  "forwardPorts": [3000],
+  "portsAttributes": {
+    "3000": {
+      "label": "SoundSentinel",
+      "onAutoForward": "notify",
+      "protocol": "https",
+      "visibility": "private"
+    }
+  }
+}

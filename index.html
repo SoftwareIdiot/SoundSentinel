@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <script>
+      (function() {
+        // Intercept native WebSocket to cleanly stub Vite HMR in iframe/Cloud Run environments
+        var NativeWebSocket = window.WebSocket;
+        if (NativeWebSocket) {
+          window.WebSocket = function(url, protocols) {
+            var urlStr = String(url || '');
+            if (urlStr.indexOf('24678') !== -1 || urlStr.indexOf('/@vite/client') !== -1 || urlStr.indexOf('token=') !== -1) {
+              return {
+                url: urlStr,
+                readyState: 3, // CLOSED
+                bufferedAmount: 0,
+                extensions: '',
+                protocol: '',
+                binaryType: 'blob',
+                onopen: null,
+                onclose: null,
+                onerror: null,
+                onmessage: null,
+                send: function() {},
+                close: function() {},
+                addEventListener: function(event, handler) {
+                  if (event === 'close') {
+                    setTimeout(function() {
+                      try { handler({ wasClean: true, code: 1000, reason: 'HMR disabled' }); } catch(err) {}
+                    }, 50);
+                  }
+                },
+                removeEventListener: function() {},
+                dispatchEvent: function() { return true; }
+              };
+            }
+            return new NativeWebSocket(url, protocols);
+          };
+          window.WebSocket.prototype = NativeWebSocket.prototype;
+          window.WebSocket.CONNECTING = NativeWebSocket.CONNECTING;
+          window.WebSocket.OPEN = NativeWebSocket.OPEN;
+          window.WebSocket.CLOSING = NativeWebSocket.CLOSING;
+          window.WebSocket.CLOSED = NativeWebSocket.CLOSED;
+        }
+
+        // Filter out expected HMR WebSocket errors in Cloud Run preview iframe environment
+        var origConsoleError = console.error;
+        console.error = function() {
+          var args = Array.prototype.slice.call(arguments);
+          var str = args.map(function(a) {
+            return (typeof a === 'object' && a !== null) ? (a.message || a.stack || JSON.stringify(a)) : String(a);
+          }).join(' ');
+          if (str.indexOf('WebSocket') !== -1 || str.indexOf('@vite/client') !== -1 || str.indexOf('server connection lost') !== -1) {
+            return;
+          }
+          origConsoleError.apply(console, args);
+        };
+
+        window.addEventListener('error', function(e) {
+          if (e.message && (e.message.indexOf('WebSocket') !== -1 || (e.filename && e.filename.indexOf('@vite/client') !== -1))) {
+            e.preventDefault();
+            e.stopPropagation();
+            return true;
+          }
+        }, true);
+
+        window.addEventListener('unhandledrejection', function(e) {
+          var reasonStr = String(e.reason && (e.reason.message || e.reason));
+          if (reasonStr.indexOf('WebSocket') !== -1 || reasonStr.indexOf('@vite/client') !== -1) {
+            e.preventDefault();
+          }
+        });
+      })();
+    </script>
+    <title>SoundSentinel - Acoustic CCTV Surveillance</title>
+    <meta name="description" content="Smart mobile acoustic CCTV app that records audio on sound detection with 10s post-roll, automated background surveillance, storage quota limits, and oldest-first circular overwrite." />
+    <meta property="og:title" content="SoundSentinel - Acoustic CCTV Surveillance" />
+    <meta property="og:description" content="Smart mobile acoustic CCTV app that records audio on sound detection with 10s post-roll, automated background surveillance, storage quota limits, and oldest-first circular overwrite." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" content="#090d16" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="SoundSentinel" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  </head>
+  <body class="bg-slate-950 text-slate-100 antialiased selection:bg-amber-500 selection:text-slate-950">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

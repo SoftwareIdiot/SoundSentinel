@@ -36,17 +36,28 @@ object CctvLogic {
         return max(0, min(100, score.roundToInt()))
     }
 
+    /** Converts the Auto sensitivity preference to a dB margin above the live room-noise floor. */
+    fun autoSensitivityMarginDb(autoMargin: Int): Double {
+        val normalized = autoMargin.coerceIn(6, 30) - 6
+        return 3.5 + normalized * 0.4375
+    }
+
+    /** Converts the Manual 0..100 gate to the dBFS scale used by the live detector. */
+    fun manualThresholdDb(threshold: Int): Double {
+        return (-72.0 + (threshold.coerceIn(5, 95) / 100.0) * 68.0).coerceIn(-68.0, -8.0)
+    }
+
+    /** Current Auto gate in dBFS, clamped away from the microphone's noise and clipping limits. */
+    fun computeAutoThresholdDb(noiseFloorDb: Double, autoMargin: Int = 12): Double {
+        return (noiseFloorDb + autoSensitivityMarginDb(autoMargin)).coerceIn(-68.0, -8.0)
+    }
+
     /**
-     * Computes dynamic AUTO threshold on 0..100 scale based on current ambient noise floor dBFS
-     * and the user's auto-sensitivity margin.
-     * - When the room is faint/quiet (e.g., -65 dBFS -> floor 10/100), threshold drops low (~20/100)
-     *   so faint whispers, footsteps, or rustling immediately trigger recording.
-     * - When the room has louder background hum/AC (e.g., -45 dBFS -> floor 40/100), threshold rises
-     *   (~52/100) to avoid endless background recording while catching real sound spikes.
+     * Computes the live Auto gate on the UI's 0..100 scale. The audio detector uses the same
+     * threshold in dBFS, so the number shown in the waveform panel matches the actual gate.
      */
     fun computeAutoThreshold(noiseFloorDb: Double, autoMargin: Int = 12): Int {
-        val floorScale = mapDecibelsToScale(noiseFloorDb)
-        return (floorScale + autoMargin.coerceIn(6, 35)).coerceIn(12, 85)
+        return mapDecibelsToScale(computeAutoThresholdDb(noiseFloorDb, autoMargin)).coerceIn(5, 95)
     }
 
     /**

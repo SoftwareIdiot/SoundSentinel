@@ -18,8 +18,8 @@ import androidx.core.app.NotificationCompat
 import com.softwareidiot.soundsentinel.MainActivity
 import com.softwareidiot.soundsentinel.data.model.CCTVEvent
 import com.softwareidiot.soundsentinel.data.model.CCTVEventType
-import com.softwareidiot.soundsentinel.data.model.DetectionMode
 import com.softwareidiot.soundsentinel.data.repository.CctvRepository
+import com.softwareidiot.soundsentinel.logic.AdaptiveAudioGate
 import com.softwareidiot.soundsentinel.logic.CctvLogic
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -45,6 +45,7 @@ data class MonitorLiveState(
     val noiseFloorDb: Double = -62.0,
     val effectiveThreshold: Int = 30,
     val liveWaveformHistory: List<Int> = List(48) { 4 },
+    val isCalibrating: Boolean = false,
     val isRecording: Boolean = false,
     val recordingDuration: Double = 0.0,
     val silenceRemaining: Double = 10.0,
@@ -74,16 +75,17 @@ class AcousticMonitorService : Service() {
             return START_NOT_STICKY
         }
 
-        if (ACTION_TRIGGER_NOW == action) {
-            manualTriggerRequested.set(true)
-            return START_STICKY
-        }
-
         startAsForeground()
 
         if (running.compareAndSet(false, true)) {
             acquireWakeLock()
-            _liveState.value = _liveState.value.copy(isRunning = true, error = null)
+            _liveState.value = _liveState.value.copy(
+                isRunning = true,
+                isCalibrating = true,
+                isRecording = false,
+                recordingDuration = 0.0,
+                error = null
+            )
             audioThread = Thread(::captureLoop, "SoundSentinel-AudioLoop").apply {
                 priority = Thread.MAX_PRIORITY
                 start()
@@ -186,9 +188,11 @@ class AcousticMonitorService : Service() {
         var quietDurationMs = 0L
         var peakScore = 0
         var triggers = 0
-        var noiseFloorDb = -62.0
+        val audioGate = AdaptiveAudioGate()
+        var noiseFloorDb = audioGate.noiseFloorDb
         var smoothedDb = -75.0
         var lastStatusUpdate = 0L
+        var lastWaveSampleAt = 0L
 
         try {
             val (openedRecord, negotiatedRate, bufferBytes) = openBestAudioRecord(activeSampleRate)
@@ -198,6 +202,9 @@ class AcousticMonitorService : Service() {
 
             _liveState.value = _liveState.value.copy(
                 isCapturing = true,
+                isCalibrating = true,
+                isRecording = false,
+                recordingDuration = 0.0,
                 activeSampleRate = activeSampleRate,
                 error = null
             )
@@ -213,9 +220,7 @@ class AcousticMonitorService : Service() {
                 if (count == 0) continue
 
                 var sum = 0.0
-                var highPassSum = 0.0
                 var peakSample = 0
-                var prevSample = pcm[0].toInt()
 
                 for (i in 0 until count) {
                     val raw = pcm[i].toInt()
@@ -223,11 +228,6 @@ class AcousticMonitorService : Service() {
                     sum += norm * norm
                     val absRaw = abs(raw)
                     if (absRaw > peakSample) peakSample = absRaw
-                    if (i > 0) {
-                        val diff = (raw - prevSample) / 32768.0
-                        highPassSum += diff * diff
-                    }
-                    prevSample = raw
                 }
 
                 val rms = sqrt(sum / count)
@@ -241,29 +241,24 @@ class AcousticMonitorService : Service() {
                 val currentSettings = repository.settings.value
                 val postRollSec = currentSettings.postRollSeconds
 
-                if (clipStream == null) {
-                    val alpha = if (db < noiseFloorDb) 0.08 else 0.015
-                    noiseFloorDb = (noiseFloorDb + (db - noiseFloorDb) * alpha).coerceIn(-72.0, -25.0)
-                }
-
                 val rmsScale = CctvLogic.mapDecibelsToScale(smoothedDb)
                 val peakScale = CctvLogic.mapDecibelsToScale(peakDb)
                 val eventLevel = max(rmsScale, (peakScale * 0.82).toInt()).coerceIn(0, 100)
-
-                val effectiveThreshold = when (currentSettings.detectionMode) {
-                    DetectionMode.AUTO -> CctvLogic.computeAutoThreshold(
-                        noiseFloorDb = noiseFloorDb,
-                        autoMargin = currentSettings.autoSensitivityMargin
-                    )
-                    DetectionMode.MANUAL -> currentSettings.sensitivityThreshold.coerceIn(5, 95)
-                }
-
-                val releaseThreshold = max(6, effectiveThreshold - 5)
-                val impulsiveSpike = (peakDb - noiseFloorDb) >= 11.0 && crestDb >= 6.0 && eventLevel >= max(10, effectiveThreshold - 4)
-                val manualForceTrigger = manualTriggerRequested.getAndSet(false)
-
-                val detected = manualForceTrigger || impulsiveSpike ||
-                        (if (clipStream == null) eventLevel >= effectiveThreshold else eventLevel >= releaseThreshold)
+                val frameDurationMs = max(1L, (count * 1000L / activeSampleRate))
+                val gate = audioGate.process(
+                    rmsDb = db,
+                    smoothedDb = smoothedDb,
+                    peakDb = peakDb,
+                    crestDb = crestDb,
+                    frameDurationMs = frameDurationMs,
+                    detectionMode = currentSettings.detectionMode,
+                    sensitivityThreshold = currentSettings.sensitivityThreshold,
+                    autoSensitivityMargin = currentSettings.autoSensitivityMargin,
+                    clipActive = clipStream != null
+                )
+                noiseFloorDb = gate.noiseFloorDb
+                val effectiveThreshold = gate.thresholdScale
+                val detected = gate.detected
 
                 val pcmBytes = encodePcm(pcm, count)
                 preRoll.addLast(pcmBytes)
@@ -272,7 +267,6 @@ class AcousticMonitorService : Service() {
                     preRollBytes -= preRoll.removeFirst().size
                 }
 
-                val frameDurationMs = max(1L, (count * 1000L / activeSampleRate))
                 var newClipStarted = false
 
                 if (detected) {
@@ -328,8 +322,9 @@ class AcousticMonitorService : Service() {
                     totalLevelSum += eventLevel
                     sampleCount++
                     peakScore = max(peakScore, eventLevel)
-                    if (waveform.size < 64 && (waveform.isEmpty() || now - lastStatusUpdate >= 160)) {
+                    if (waveform.size < 64 && now - lastWaveSampleAt >= 160) {
                         waveform.add(max(8, eventLevel))
+                        lastWaveSampleAt = now
                     }
 
                     if (!detected) {
@@ -346,18 +341,17 @@ class AcousticMonitorService : Service() {
                         val cTriggers = triggers + 1
                         val cStart = clipStart
                         val cRate = activeSampleRate
+                        val cPeakScore = peakScore
 
-                        scope.launch {
-                            repository.savePcmClip(
-                                pcmBytes = clipData,
-                                sampleRate = cRate,
-                                startTime = cStart,
-                                peakScore = peakScore,
-                                avgScore = avgScore,
-                                triggersCount = cTriggers,
-                                waveform = clipWave
-                            )
-                        }
+                        saveClipAsync(
+                            pcmBytes = clipData,
+                            sampleRate = cRate,
+                            startTime = cStart,
+                            peakScore = cPeakScore,
+                            avgScore = avgScore,
+                            triggersCount = cTriggers,
+                            waveform = clipWave
+                        )
 
                         clipStream = null
                         quietDurationMs = 0L
@@ -382,6 +376,7 @@ class AcousticMonitorService : Service() {
                         noiseFloorDb = noiseFloorDb,
                         effectiveThreshold = effectiveThreshold,
                         liveWaveformHistory = rollingWaveHistory.toList(),
+                        isCalibrating = gate.isCalibrating,
                         isRecording = clipStream != null,
                         recordingDuration = durSeconds,
                         silenceRemaining = silenceLeft,
@@ -394,6 +389,7 @@ class AcousticMonitorService : Service() {
             val msg = t.message ?: t.javaClass.simpleName
             _liveState.value = _liveState.value.copy(
                 isCapturing = false,
+                isCalibrating = false,
                 error = "Microphone error: $msg"
             )
         } finally {
@@ -404,18 +400,17 @@ class AcousticMonitorService : Service() {
                 val cTriggers = triggers + 1
                 val cStart = clipStart
                 val cRate = activeSampleRate
+                val cPeakScore = peakScore
 
-                scope.launch {
-                    repository.savePcmClip(
-                        pcmBytes = clipData,
-                        sampleRate = cRate,
-                        startTime = cStart,
-                        peakScore = peakScore,
-                        avgScore = avgScore,
-                        triggersCount = cTriggers,
-                        waveform = clipWave
-                    )
-                }
+                saveClipAsync(
+                    pcmBytes = clipData,
+                    sampleRate = cRate,
+                    startTime = cStart,
+                    peakScore = cPeakScore,
+                    avgScore = avgScore,
+                    triggersCount = cTriggers,
+                    waveform = clipWave
+                )
             }
 
             try {
@@ -428,6 +423,7 @@ class AcousticMonitorService : Service() {
                 _liveState.value = _liveState.value.copy(
                     isRunning = false,
                     isCapturing = false,
+                    isCalibrating = false,
                     isRecording = false,
                     soundLevel = 0,
                     currentDb = -80.0
@@ -438,12 +434,49 @@ class AcousticMonitorService : Service() {
         }
     }
 
+    private fun saveClipAsync(
+        pcmBytes: ByteArray,
+        sampleRate: Int,
+        startTime: Long,
+        peakScore: Int,
+        avgScore: Int,
+        triggersCount: Int,
+        waveform: List<Int>
+    ) {
+        scope.launch {
+            try {
+                repository.savePcmClip(
+                    pcmBytes = pcmBytes,
+                    sampleRate = sampleRate,
+                    startTime = startTime,
+                    peakScore = peakScore,
+                    avgScore = avgScore,
+                    triggersCount = triggersCount,
+                    waveform = waveform
+                )
+            } catch (e: Exception) {
+                val details = e.message ?: e.javaClass.simpleName
+                repository.logEvent(
+                    CCTVEvent(
+                        id = UUID.randomUUID().toString(),
+                        timestamp = System.currentTimeMillis(),
+                        type = CCTVEventType.WARNING,
+                        message = "Clip save failed: $details",
+                        decibels = peakScore
+                    )
+                )
+                _liveState.value = _liveState.value.copy(error = "Clip save failed: $details")
+            }
+        }
+    }
+
     private fun stopMonitoring() {
         running.set(false)
         releaseWakeLock()
         _liveState.value = _liveState.value.copy(
             isRunning = false,
             isCapturing = false,
+            isCalibrating = false,
             isRecording = false
         )
         repository.logEvent(
@@ -550,12 +583,10 @@ class AcousticMonitorService : Service() {
     companion object {
         const val ACTION_START = "com.softwareidiot.soundsentinel.START"
         const val ACTION_STOP = "com.softwareidiot.soundsentinel.STOP"
-        const val ACTION_TRIGGER_NOW = "com.softwareidiot.soundsentinel.TRIGGER_NOW"
         private const val CHANNEL_ID = "sound_sentinel_monitor"
         private const val NOTIFICATION_ID = 7142
         private const val MAX_CLIP_SECONDS = 180
 
-        private val manualTriggerRequested = AtomicBoolean(false)
         private val _liveState = MutableStateFlow(MonitorLiveState())
         val liveState: StateFlow<MonitorLiveState> = _liveState.asStateFlow()
 
@@ -577,11 +608,5 @@ class AcousticMonitorService : Service() {
             context.startService(intent)
         }
 
-        fun triggerInstantRecord(context: Context) {
-            val intent = Intent(context, AcousticMonitorService::class.java).apply {
-                action = ACTION_TRIGGER_NOW
-            }
-            context.startService(intent)
-        }
     }
 }

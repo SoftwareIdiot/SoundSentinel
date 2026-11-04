@@ -42,20 +42,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Security
-import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -84,7 +80,6 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.softwareidiot.soundsentinel.data.model.CCTVSettings
-import com.softwareidiot.soundsentinel.data.model.DetectionMode
 import com.softwareidiot.soundsentinel.data.model.StorageStats
 import com.softwareidiot.soundsentinel.logic.CctvLogic
 import com.softwareidiot.soundsentinel.ui.components.LiveScrollingWaveformView
@@ -107,10 +102,10 @@ import java.util.Locale
 fun SurveillanceScreen(
     isArmed: Boolean,
     onToggleArmed: () -> Unit,
-    onTriggerInstantRecord: () -> Unit,
     onOpenVault: () -> Unit,
     onOpenPreferences: () -> Unit,
     isMicCapturing: Boolean,
+    isCalibrating: Boolean,
     activeSampleRate: Int,
     soundLevel: Int,
     currentDb: Double,
@@ -124,7 +119,6 @@ fun SurveillanceScreen(
     micError: String?,
     settings: CCTVSettings,
     storageStats: StorageStats,
-    onUpdateSettings: (CCTVSettings) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -522,10 +516,10 @@ fun SurveillanceScreen(
                             text = when {
                                 isRecording -> "RECORDING"
                                 isArmed -> "ARMED"
-                                else -> "TAP TO ARM"
+                                else -> "ARM SOUND\nSENTINEL"
                             },
                             color = TextPrimary,
-                            fontSize = 14.sp,
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.Black,
                             letterSpacing = 0.8.sp
                         )
@@ -533,8 +527,8 @@ fun SurveillanceScreen(
                         Text(
                             text = when {
                                 isRecording -> String.format(Locale.US, "%.1fs • Tail %.0fs", recordingDuration, silenceCountdown)
-                                isArmed -> "Active in Background"
-                                else -> "Runs in Background"
+                                isArmed -> if (isCalibrating) "Calibrating room" else "Listening for events"
+                                else -> "Ready to arm"
                             },
                             color = if (isArmed) Color.White.copy(alpha = 0.85f) else TextMuted,
                             fontSize = 10.sp,
@@ -548,10 +542,11 @@ fun SurveillanceScreen(
 
             Text(
                 text = when {
-                    isRecording -> "Sound event captured! Continues for ${settings.postRollSeconds}s after quiet."
-                    isArmed && isMicCapturing -> "Listening continuously — even when your screen is locked."
+                    isRecording -> "Sound detected. Saving after ${settings.postRollSeconds}s of quiet."
+                    isArmed && isCalibrating -> "Calibrating room noise before automatic detection starts..."
+                    isArmed && isMicCapturing -> "Armed and listening. A clip starts only when sound crosses the gate."
                     isArmed -> "Initializing phone microphone..."
-                    else -> "Arm once to automatically record any sound in the foreground or background."
+                    else -> "Arm SoundSentinel to listen; clips start automatically when sound is detected."
                 },
                 color = if (isRecording) GoldAccent else TextSecondary,
                 fontSize = 11.sp,
@@ -617,34 +612,6 @@ fun SurveillanceScreen(
                         fontFamily = FontFamily.Monospace
                     )
 
-                    if (isArmed && !isRecording) {
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(CoralPrimary.copy(alpha = 0.18f))
-                                .border(width = 1.dp, color = CoralPrimary.copy(alpha = 0.6f), shape = RoundedCornerShape(8.dp))
-                                .clickable { onTriggerInstantRecord() }
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
-                                .testTag("record_now_button")
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    imageVector = Icons.Default.FiberManualRecord,
-                                    contentDescription = "Record Now",
-                                    tint = CoralPrimary,
-                                    modifier = Modifier.size(10.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = "REC NOW",
-                                    color = CoralPrimary,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    fontFamily = FontFamily.Monospace
-                                )
-                            }
-                        }
-                    }
                 }
             }
 
@@ -687,179 +654,7 @@ fun SurveillanceScreen(
             }
         }
 
-        // BOTTOM CARD: Audio Detection Setup (AUTO vs MANUAL)
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(22.dp))
-                .background(DarkSurface)
-                .border(width = 1.dp, color = BorderColor, shape = RoundedCornerShape(22.dp))
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.Tune,
-                        contentDescription = "Audio Detection Setup",
-                        tint = CoralPrimary,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "AUDIO DETECTION",
-                        color = TextPrimary,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace
-                    )
-                }
 
-                // Segmented AUTO / MANUAL Toggle
-                Row(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(DarkSurfaceVariant)
-                        .padding(3.dp)
-                ) {
-                    val isAuto = settings.detectionMode == DetectionMode.AUTO
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(
-                                brush = if (isAuto) {
-                                    Brush.horizontalGradient(listOf(CoralPrimary, GoldAccent))
-                                } else {
-                                    Brush.horizontalGradient(listOf(Color.Transparent, Color.Transparent))
-                                }
-                            )
-                            .clickable { onUpdateSettings(settings.copy(detectionMode = DetectionMode.AUTO)) }
-                            .padding(horizontal = 12.dp, vertical = 5.dp)
-                            .testTag("mode_auto_btn")
-                    ) {
-                        Text(
-                            text = "AUTO",
-                            color = if (isAuto) Color.White else TextSecondary,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace
-                        )
-                    }
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(
-                                brush = if (!isAuto) {
-                                    Brush.horizontalGradient(listOf(CoralPrimary, VioletAccent))
-                                } else {
-                                    Brush.horizontalGradient(listOf(Color.Transparent, Color.Transparent))
-                                }
-                            )
-                            .clickable { onUpdateSettings(settings.copy(detectionMode = DetectionMode.MANUAL)) }
-                            .padding(horizontal = 12.dp, vertical = 5.dp)
-                            .testTag("mode_manual_btn")
-                    ) {
-                        Text(
-                            text = "MANUAL",
-                            color = if (!isAuto) Color.White else TextSecondary,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace
-                        )
-                    }
-                }
-            }
-
-            if (settings.detectionMode == DetectionMode.AUTO) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Adaptive Sensitivity (Faint ↔ Loud)",
-                        color = TextSecondary,
-                        fontSize = 11.sp
-                    )
-                    Text(
-                        text = "Auto +${settings.autoSensitivityMargin} pts (Gate $effectiveThreshold)",
-                        color = GoldAccent,
-                        fontSize = 11.sp,
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                Slider(
-                    value = settings.autoSensitivityMargin.toFloat(),
-                    onValueChange = { onUpdateSettings(settings.copy(autoSensitivityMargin = it.toInt())) },
-                    valueRange = 6f..30f,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(28.dp)
-                        .testTag("auto_margin_slider"),
-                    colors = SliderDefaults.colors(
-                        thumbColor = GoldAccent,
-                        activeTrackColor = CoralPrimary,
-                        inactiveTrackColor = DarkSurfaceVariant
-                    )
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text("High sensitivity (faint sounds)", color = TextMuted, fontSize = 10.sp)
-                    Text("Lower sensitivity (loud room)", color = TextMuted, fontSize = 10.sp)
-                }
-            } else {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Manual Trigger Threshold",
-                        color = TextSecondary,
-                        fontSize = 11.sp
-                    )
-                    Text(
-                        text = "${settings.sensitivityThreshold} / 100",
-                        color = CyanAccent,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace
-                    )
-                }
-
-                Slider(
-                    value = settings.sensitivityThreshold.toFloat(),
-                    onValueChange = { onUpdateSettings(settings.copy(sensitivityThreshold = it.toInt())) },
-                    valueRange = 8f..90f,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(28.dp)
-                        .testTag("sensitivity_slider"),
-                    colors = SliderDefaults.colors(
-                        thumbColor = CyanAccent,
-                        activeTrackColor = VioletAccent,
-                        inactiveTrackColor = DarkSurfaceVariant
-                    )
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text("More sensitive (faint)", color = TextMuted, fontSize = 10.sp)
-                    Text("Less sensitive (loud)", color = TextMuted, fontSize = 10.sp)
-                }
-            }
-        }
     }
 }
 

@@ -176,10 +176,10 @@ fun SoundSentinelAppContent(viewModel: MainViewModel) {
                             SurveillanceScreen(
                                 isArmed = liveState.isRunning,
                                 onToggleArmed = { viewModel.toggleArmed() },
-                                onTriggerInstantRecord = { viewModel.triggerInstantRecord() },
                                 onOpenVault = { viewModel.setTab(CctvTab.VAULT) },
                                 onOpenPreferences = { viewModel.setTab(CctvTab.PREFERENCES) },
                                 isMicCapturing = liveState.isCapturing,
+                                isCalibrating = liveState.isCalibrating,
                                 activeSampleRate = liveState.activeSampleRate,
                                 soundLevel = liveState.soundLevel,
                                 currentDb = liveState.currentDb,
@@ -192,8 +192,7 @@ fun SoundSentinelAppContent(viewModel: MainViewModel) {
                                 triggersInSession = liveState.triggersInSession,
                                 micError = liveState.error,
                                 settings = settings,
-                                storageStats = storageStats,
-                                onUpdateSettings = { viewModel.updateSettings(it) }
+                                storageStats = storageStats
                             )
                         }
 

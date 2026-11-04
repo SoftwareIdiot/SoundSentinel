@@ -64,14 +64,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun triggerInstantRecord() {
-        val app = getApplication<Application>()
-        if (liveMonitorState.value.isRunning) {
-            AcousticMonitorService.triggerInstantRecord(app)
-            _toastMessage.value = "Manual trigger activated — recording clip now"
-        }
-    }
-
     fun updateSettings(newSettings: CCTVSettings) {
         val oldQuality = settings.value.audioQuality
         repository.updateSettings(newSettings)

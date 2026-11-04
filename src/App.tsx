@@ -34,10 +34,9 @@ export default function App() {
     recordingDuration,
     triggersInCurrentSession,
     isMicActive,
+    pendingNativeRecordings,
     micError,
     storageWarningActive,
-    simulateSoundSpike,
-    simulateDemoEvent,
     classifyExistingRecording,
     deleteRecording,
     toggleProtect,
@@ -133,11 +132,11 @@ export default function App() {
               recordingDuration={recordingDuration}
               triggersCount={triggersInCurrentSession}
               isMicActive={isMicActive}
+              pendingNativeRecordings={pendingNativeRecordings}
               micError={micError}
               storageWarningActive={storageWarningActive}
               settings={settings}
               onUpdateSettings={updateSettings}
-              onSimulateDemo={simulateDemoEvent}
             />
           )}
 
@@ -147,8 +146,6 @@ export default function App() {
               onDeleteRecording={deleteRecording}
               onToggleProtect={toggleProtect}
               onClearUnprotected={clearUnprotectedRecordings}
-              onSimulateSound={simulateSoundSpike}
-              onArm={setArmed}
               onReclassify={classifyExistingRecording}
             />
           )}

@@ -16,6 +16,7 @@ import {
 import { CCTVSettings, StorageStats, RetentionMode } from '../types';
 import { formatBytes, getRetentionDurationMs } from '../utils/cctvLogic';
 import { notificationService } from '../utils/notifications';
+import { isAndroidNativeApp } from '../native/backgroundMonitor';
 
 interface StorageManagerProps {
   settings: CCTVSettings;
@@ -33,6 +34,8 @@ export const StorageManager: React.FC<StorageManagerProps> = ({
   const [customQuotaInput, setCustomQuotaInput] = useState<string>(String(settings.storageQuotaMB));
   const [customHoursInput, setCustomHoursInput] = useState<string>(String(settings.customRetentionHours));
   const [testNotifSent, setTestNotifSent] = useState<boolean>(false);
+  const [isTestingAI, setIsTestingAI] = useState(false);
+  const [aiTestResult, setAiTestResult] = useState<{ kind: 'success' | 'warning' | 'error'; message: string } | null>(null);
 
   const quotaPresets = [25, 50, 100, 250, 500, 1000];
 
@@ -76,6 +79,49 @@ export const StorageManager: React.FC<StorageManagerProps> = ({
     setTimeout(() => setTestNotifSent(false), 3000);
   };
 
+  const handleTestAI = async () => {
+    const baseUrl = (settings.apiBaseUrl || '').trim().replace(/\/+$/, '');
+    if (!baseUrl && isAndroidNativeApp()) {
+      setAiTestResult({ kind: 'error', message: 'Enter the laptop Wi-Fi address (for example http://192.168.1.25:3000) first. The installed app cannot reach the laptop through its own localhost address.' });
+      return;
+    }
+
+    setIsTestingAI(true);
+    setAiTestResult(null);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 45000);
+    try {
+      const response = await fetch(`${baseUrl}/api/classify-audio`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(settings.apiAccessToken ? { Authorization: `Bearer ${settings.apiAccessToken}` } : {}),
+        },
+        signal: controller.signal,
+        body: JSON.stringify({
+          simulatedTag: 'Connection test only: classify a repeating smoke alarm beep. No audio is recorded or uploaded.',
+          peakDecibels: 55,
+          avgDecibels: 30,
+          duration: 2,
+          triggersCount: 1,
+        }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setAiTestResult({ kind: 'error', message: result.error || `AI server returned HTTP ${response.status}.` });
+      } else if (result.engine === 'gemini') {
+        setAiTestResult({ kind: 'success', message: `Gemini is working. Test result: ${result.tag || 'sound event'} (${Math.round((result.confidence || 0) * 100)}% confidence).` });
+      } else {
+        setAiTestResult({ kind: 'warning', message: result.aiMessage || 'The server responded, but this result came from the local heuristic rather than Gemini.' });
+      }
+    } catch (error) {
+      setAiTestResult({ kind: 'error', message: error instanceof Error && error.name === 'AbortError' ? 'AI test timed out. Check that the laptop server is running and both devices are on the same Wi-Fi.' : 'Could not reach the AI server. Check the laptop address, server, Wi-Fi, and firewall.' });
+    } finally {
+      clearTimeout(timeout);
+      setIsTestingAI(false);
+    }
+  };
+
   // Retention time calculation
   const retentionMs = getRetentionDurationMs(settings.retentionMode, settings.customRetentionHours);
   const expirationDate = retentionMs !== Infinity ? new Date(Date.now() + retentionMs) : null;
@@ -91,6 +137,59 @@ export const StorageManager: React.FC<StorageManagerProps> = ({
         <p className="text-xs text-slate-400">
           Control maximum storage allocation, FIFO circular overwrite, and retention rules
         </p>
+        <p className="text-[11px] text-slate-500">
+          Recordings are stored in this app’s private space. Android does not need broad storage permission for recording or showing these clips.
+        </p>
+      </div>
+
+      <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 space-y-2">
+        <label htmlFor="classification-server" className="text-xs font-bold text-slate-200 uppercase tracking-wider font-mono">
+          Laptop AI Server
+        </label>
+        <input
+          id="classification-server"
+          type="url"
+          inputMode="url"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+          value={settings.apiBaseUrl || ''}
+          onChange={(event) => onUpdateSettings({ apiBaseUrl: event.target.value.trim().replace(/\/$/, '') })}
+          placeholder="http://192.168.1.25:3000"
+          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-emerald-500 font-mono"
+          aria-describedby="classification-server-help"
+        />
+        <input
+          type="password"
+          autoComplete="off"
+          value={settings.apiAccessToken || ''}
+          onChange={(event) => onUpdateSettings({ apiAccessToken: event.target.value })}
+          placeholder="Server access token (required for LAN AI)"
+          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-emerald-500 font-mono"
+          aria-label="Laptop server access token"
+        />
+        <p id="classification-server-help" className="text-[11px] text-slate-400 leading-relaxed">
+          In the installed Android app, enter your laptop’s local Wi-Fi address and port 3000. Keep both devices on the same trusted network. Set APP_API_TOKEN in the laptop’s ignored .env file and enter the same token here for protected LAN access. The Gemini key stays on the laptop and is never put in the APK. A connection test sends a short text prompt only, not recorded audio.
+        </p>
+        <button
+          type="button"
+          onClick={handleTestAI}
+          disabled={isTestingAI}
+          className="min-h-10 w-full rounded-xl border border-emerald-700/70 bg-emerald-950/60 px-3 py-2 text-xs font-bold text-emerald-200 transition hover:bg-emerald-900/70 disabled:cursor-wait disabled:opacity-60"
+        >
+          {isTestingAI ? 'Testing AI connection…' : 'Test AI connection'}
+        </button>
+        {aiTestResult && (
+          <p role="status" className={`rounded-xl border px-3 py-2 text-xs leading-relaxed ${
+            aiTestResult.kind === 'success'
+              ? 'border-emerald-800/70 bg-emerald-950/30 text-emerald-200'
+              : aiTestResult.kind === 'warning'
+                ? 'border-amber-800/70 bg-amber-950/30 text-amber-200'
+                : 'border-red-900/70 bg-red-950/30 text-red-200'
+          }`}>
+            {aiTestResult.message}
+          </p>
+        )}
       </div>
 
       {/* Storage Meter Card */}

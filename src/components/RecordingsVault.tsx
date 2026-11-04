@@ -22,8 +22,6 @@ interface RecordingsVaultProps {
   onDeleteRecording: (id: string) => void;
   onToggleProtect: (id: string, isProtected: boolean) => void;
   onClearUnprotected: () => void;
-  onSimulateSound?: (db: number, hint?: string) => void;
-  onArm?: (armed: boolean) => void;
   onReclassify?: (id: string) => void;
 }
 
@@ -32,8 +30,6 @@ export const RecordingsVault: React.FC<RecordingsVaultProps> = ({
   onDeleteRecording,
   onToggleProtect,
   onClearUnprotected,
-  onSimulateSound,
-  onArm,
   onReclassify,
 }) => {
   const [activeRecordingId, setActiveRecordingId] = useState<string | null>(null);
@@ -190,7 +186,7 @@ export const RecordingsVault: React.FC<RecordingsVaultProps> = ({
                   )}
                 </div>
                 <div className="text-[10px] text-slate-400 font-mono">
-                  Peak: {activeRecording.peakDecibels} dB • {formatBytes(activeRecording.sizeBytes)} • Re-triggered {activeRecording.triggersCount}x
+                  Peak level {activeRecording.peakDecibels}/100 • {formatBytes(activeRecording.sizeBytes)} • Re-triggered {activeRecording.triggersCount}x
                 </div>
               </div>
             </div>
@@ -248,10 +244,18 @@ export const RecordingsVault: React.FC<RecordingsVaultProps> = ({
                   {activeRecording.classification.explanation}
                 </span>
               </div>
-              <span className="text-[10px] text-slate-400 font-mono">
-                {Math.round(activeRecording.classification.confidence * 100)}% conf
-              </span>
+              <div className="shrink-0 text-right text-[10px] text-slate-400 font-mono">
+                <div>{Math.round(activeRecording.classification.confidence * 100)}% conf</div>
+                <div className={activeRecording.classification.engine === 'gemini' ? 'text-emerald-400' : 'text-amber-400'}>
+                  {activeRecording.classification.engine === 'gemini' ? 'Gemini AI' : 'Local fallback'}
+                </div>
+              </div>
             </div>
+          )}
+          {activeRecording.classification?.providerMessage && activeRecording.classification.engine !== 'gemini' && (
+            <p className="rounded-lg border border-amber-900/50 bg-amber-950/30 px-2 py-1.5 text-[10px] leading-relaxed text-amber-200/90">
+              {activeRecording.classification.providerMessage}
+            </p>
           )}
 
           {/* Scrubber slider and time display */}
@@ -329,39 +333,8 @@ export const RecordingsVault: React.FC<RecordingsVaultProps> = ({
           <Volume2 className="w-10 h-10 text-slate-600 mb-2" />
           <p className="text-xs font-semibold text-slate-300">No recordings in vault</p>
           <p className="text-[11px] text-slate-500 mt-1 max-w-xs leading-relaxed">
-            Switch on CCTV Sentinel or trigger a sample sound. Sound detections automatically record, classify with AI, and appear here.
+            Arm the monitor and a real sound event will be recorded here. No sample events are shown.
           </p>
-          {onSimulateSound && (
-            <div className="flex flex-wrap gap-2 justify-center mt-4">
-              <button
-                onClick={() => {
-                  if (onArm) onArm(true);
-                  onSimulateSound(88, 'Glass Breaking');
-                }}
-                className="px-3 py-1.5 rounded-xl bg-red-950/80 border border-red-800/80 hover:bg-red-900 font-mono text-xs font-bold text-red-300 transition active:scale-95"
-              >
-                + Test Glass Break
-              </button>
-              <button
-                onClick={() => {
-                  if (onArm) onArm(true);
-                  onSimulateSound(48, 'Footsteps');
-                }}
-                className="px-3 py-1.5 rounded-xl bg-amber-950/80 border border-amber-800/80 hover:bg-amber-900 font-mono text-xs font-bold text-amber-300 transition active:scale-95"
-              >
-                + Test Footsteps
-              </button>
-              <button
-                onClick={() => {
-                  if (onArm) onArm(true);
-                  onSimulateSound(58, 'Human Voice / Speech');
-                }}
-                className="px-3 py-1.5 rounded-xl bg-blue-950/80 border border-blue-800/80 hover:bg-blue-900 font-mono text-xs font-bold text-blue-300 transition active:scale-95"
-              >
-                + Test Voice
-              </button>
-            </div>
-          )}
         </div>
       ) : (
         <div className="space-y-2.5">
@@ -419,6 +392,9 @@ export const RecordingsVault: React.FC<RecordingsVaultProps> = ({
                           <span className="text-[9px] text-slate-400 font-mono">
                             {Math.round(rec.classification.confidence * 100)}% conf
                           </span>
+                          <span className={`text-[9px] font-mono ${rec.classification.engine === 'gemini' ? 'text-emerald-400' : 'text-amber-400'}`}>
+                            {rec.classification.engine === 'gemini' ? 'Gemini' : 'Local'}
+                          </span>
                         </div>
                       )}
 
@@ -429,7 +405,7 @@ export const RecordingsVault: React.FC<RecordingsVaultProps> = ({
                         </span>
                         <span className="flex items-center gap-1">
                           <Volume2 className="w-3 h-3 text-emerald-500" />
-                          {rec.peakDecibels} dB
+                          {rec.peakDecibels}/100
                         </span>
                         <span className="flex items-center gap-1">
                           <HardDrive className="w-3 h-3 text-slate-500" />

@@ -33,10 +33,11 @@ test('clientHeuristicClassify detects human voice as low threat speech', () => {
   assert.equal(result.category, 'speech');
 });
 
-test('clientHeuristicClassify classifies unknown high impulses as loud impact', () => {
+test('clientHeuristicClassify does not guess a sound class from loudness alone', () => {
   const result = clientHeuristicClassify(
     { peakDecibels: 92, avgDecibels: 70, duration: 2 }
   );
-  assert.equal(result.tag, 'Loud Impact / Bang');
-  assert.equal(result.threatLevel, 'high');
+  assert.equal(result.tag, 'Ambient Noise');
+  assert.equal(result.threatLevel, 'info');
+  assert.ok(result.confidence < 0.6);
 });

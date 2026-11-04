@@ -9,7 +9,6 @@ import {
 import {
   calculateDecibelsFromRMS,
   mapDecibelsToScale,
-  isSoundDetected,
   calculateStorageStats,
   identifyOldestToPrune,
   identifyExpiredRecordings,
@@ -29,6 +28,9 @@ import {
 } from '../utils/db';
 import { notificationService } from '../utils/notifications';
 import { classifyAudioRecording } from '../utils/audioClassifier';
+import { backgroundMonitor, isAndroidNativeApp, NativeRecordingInfo } from '../native/backgroundMonitor';
+
+const DEFAULT_LAPTOP_SERVER_URL = import.meta.env.VITE_LAPTOP_SERVER_URL?.trim() || '';
 
 const DEFAULT_SETTINGS: CCTVSettings = {
   isArmed: false,
@@ -44,7 +46,16 @@ const DEFAULT_SETTINGS: CCTVSettings = {
   enableScreenWakeLock: true,
   enableKeepAliveAudio: true,
   enableAIClassification: true, // AI audio classification enabled by default
+  apiBaseUrl: DEFAULT_LAPTOP_SERVER_URL,
+  apiAccessToken: '',
 };
+
+function nativeWavToBlob(base64: string): Blob {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: 'audio/wav' });
+}
 
 export function useAcousticCCTV() {
   const [settings, setSettings] = useState<CCTVSettings>(DEFAULT_SETTINGS);
@@ -68,6 +79,7 @@ export function useAcousticCCTV() {
   const [recordingDuration, setRecordingDuration] = useState<number>(0);
   const [triggersInCurrentSession, setTriggersInCurrentSession] = useState<number>(0);
   const [isMicActive, setIsMicActive] = useState<boolean>(false);
+  const [pendingNativeRecordings, setPendingNativeRecordings] = useState<number>(0);
   const [micError, setMicError] = useState<string | null>(null);
   const [storageWarningActive, setStorageWarningActive] = useState<boolean>(false);
 
@@ -77,7 +89,12 @@ export function useAcousticCCTV() {
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const preRollChunksRef = useRef<Blob[]>([]);
+  const finalizingRecordingRef = useRef(false);
   const animationFrameRef = useRef<number | null>(null);
+  const smoothedDbRef = useRef(-80);
+  const noiseFloorDbRef = useRef(-60);
+  const aboveGateFramesRef = useRef(0);
 
   // Mutable state refs to prevent stale closures in audio processing loops
   const settingsRef = useRef<CCTVSettings>(settings);
@@ -96,9 +113,7 @@ export function useAcousticCCTV() {
     waveformPoints: [] as number[],
   });
 
-  // Simulated sound spike ref (for testing or mic-free environments)
-  const simulationSpikeRef = useRef<number>(0);
-  const activeSoundHintRef = useRef<string>('');
+  const nativeSyncInProgressRef = useRef(false);
 
   // Refresh recordings & storage stats from IndexedDB
   const refreshRecordings = useCallback(async () => {
@@ -165,36 +180,126 @@ export function useAcousticCCTV() {
     []
   );
 
+  const syncNativeRecordings = useCallback(async () => {
+    if (!isAndroidNativeApp() || nativeSyncInProgressRef.current) return;
+    nativeSyncInProgressRef.current = true;
+    try {
+      const result = await backgroundMonitor.listPendingRecordings();
+      const pending = result.recordings || [];
+      if (!pending.length) return;
+      const existingIds = new Set((await getAllRecordingsFromDB()).map((recording) => recording.id));
+      for (const info of pending as NativeRecordingInfo[]) {
+        if (existingIds.has(info.id)) {
+          await backgroundMonitor.acknowledgeRecording({ id: info.id });
+          continue;
+        }
+        const { base64 } = await backgroundMonitor.readRecording({ id: info.id });
+        const blob = nativeWavToBlob(base64);
+        const recording: AudioRecording = {
+          ...info,
+          dateString: new Date(info.timestamp).toLocaleString(),
+          blob,
+          audioUrl: URL.createObjectURL(blob),
+          sizeBytes: blob.size,
+          isProtected: false,
+        };
+        await saveRecordingToDB(recording);
+        await addEvent('detection', `Background sound detected and recorded (${info.duration}s)`, info.peakDecibels);
+        await addEvent('saved', `Background recording imported (${info.duration}s, peak ${info.peakDecibels})`, info.peakDecibels);
+        if (settingsRef.current.enableAIClassification) {
+          const classification = info.classification || await classifyAudioRecording(
+            recording,
+            undefined,
+            settingsRef.current.apiBaseUrl,
+            settingsRef.current.apiAccessToken
+          );
+          recording.classification = classification;
+          await saveRecordingToDB(recording);
+          await addEvent(
+            'classified',
+            `Classified: ${classification.tag} (${Math.round(classification.confidence * 100)}% confidence) - ${classification.explanation}`,
+            info.peakDecibels,
+            classification.tag,
+            classification.threatLevel,
+            classification.confidence
+          );
+        }
+        await backgroundMonitor.acknowledgeRecording({ id: info.id });
+      }
+      await refreshRecordings();
+      await refreshEvents();
+    } catch (error) {
+      console.warn('Could not import native background recordings', error);
+    } finally {
+      nativeSyncInProgressRef.current = false;
+    }
+  }, [addEvent, refreshEvents, refreshRecordings]);
+
   // Initialize settings and database on mount
   useEffect(() => {
     async function init() {
       const saved = await getSettingsFromDB();
-      if (saved) {
-        const merged: CCTVSettings = {
-          ...DEFAULT_SETTINGS,
-          ...saved,
-          enableAIClassification: saved.enableAIClassification !== false,
-        };
-        setSettings(merged);
-        settingsRef.current = merged;
+      let nativeRunning: boolean | undefined;
+      if (isAndroidNativeApp()) {
+        try {
+          nativeRunning = (await backgroundMonitor.getStatus()).running;
+        } catch { /* Native bridge may be starting during the first render. */ }
       }
+      const merged: CCTVSettings = {
+        ...DEFAULT_SETTINGS,
+        ...(saved || {}),
+        enableAIClassification: saved?.enableAIClassification !== false,
+        apiBaseUrl: saved?.apiBaseUrl || DEFAULT_LAPTOP_SERVER_URL,
+        isArmed: nativeRunning ?? saved?.isArmed ?? false,
+      };
+      setSettings(merged);
+      settingsRef.current = merged;
       await refreshRecordings();
       await refreshEvents();
+      await syncNativeRecordings();
     }
     init();
+
+    let nativePollCount = 0;
+    const nativePoll = isAndroidNativeApp()
+      ? setInterval(async () => {
+          try {
+            const state = await backgroundMonitor.getStatus();
+            setIsMicActive(state.capturing);
+            setCurrentSoundLevel(state.soundLevel);
+            setCurrentDecibels(state.decibels);
+            setIsRecording(state.recording);
+            setRecordingDuration(state.recordingDuration || 0);
+            setSilenceCountdown(state.silenceRemaining ?? settingsRef.current.postRollSeconds);
+            setPendingNativeRecordings(state.pendingRecordings || 0);
+            setMicError(state.error || null);
+            if (state.running !== settingsRef.current.isArmed) {
+              const updated = { ...settingsRef.current, isArmed: state.running };
+              settingsRef.current = updated;
+              setSettings(updated);
+              await saveSettingsToDB(updated);
+            }
+          } catch (error) {
+            console.warn('Native monitor status unavailable', error);
+          }
+          nativePollCount += 1;
+          if (nativePollCount % 5 === 0) await syncNativeRecordings();
+        }, 1000)
+      : undefined;
 
     // Listen to visibility changes (running in background)
     const handleVisibility = () => {
       const hidden = document.visibilityState === 'hidden';
-      if (hidden && settingsRef.current.isArmed) {
+      if (hidden && settingsRef.current.isArmed && !isAndroidNativeApp()) {
         addEvent('system', 'App moved to the background while armed; continued monitoring is not guaranteed');
       }
     };
     document.addEventListener('visibilitychange', handleVisibility);
     return () => {
       document.removeEventListener('visibilitychange', handleVisibility);
+      if (nativePoll) clearInterval(nativePoll);
     };
-  }, [refreshRecordings, refreshEvents, addEvent]);
+  }, [refreshRecordings, refreshEvents, addEvent, syncNativeRecordings]);
 
   // Periodic retention and circular buffer auto-prune sweep
   useEffect(() => {
@@ -243,7 +348,21 @@ export function useAcousticCCTV() {
 
     const recorder = mediaRecorderRef.current;
     if (recorder && recorder.state === 'recording') {
-      recorder.stop();
+      finalizingRecordingRef.current = true;
+      await new Promise<void>((resolve) => {
+        const finish = () => {
+          window.clearTimeout(timeout);
+          finalizingRecordingRef.current = false;
+          resolve();
+        };
+        const timeout = window.setTimeout(finish, 1500);
+        recorder.addEventListener('dataavailable', finish, { once: true });
+        try {
+          recorder.requestData();
+        } catch {
+          finish();
+        }
+      });
     }
 
     const durationSec = Math.max(1, Math.round((Date.now() - state.startTime) / 100) / 10);
@@ -251,19 +370,15 @@ export function useAcousticCCTV() {
     const peakDb = state.peakLevel;
     const triggersCount = state.triggersCount;
     const sampleWaveform = state.waveformPoints.slice(0, 40);
+    const chunks = audioChunksRef.current.splice(0);
+    const mimeType = chunks.find((chunk) => chunk.type)?.type || recorder?.mimeType || 'audio/webm';
+    const finalBlob = new Blob(chunks, { type: mimeType });
+    if (finalBlob.size === 0) {
+      await addEvent('warning', 'Recording had no audio data and was discarded. Check microphone permission and try again.');
+      return;
+    }
 
-    // Wait 100ms for recorder dataavailable event to gather all chunks
-    setTimeout(async () => {
-      let finalBlob: Blob;
-      if (audioChunksRef.current.length > 0) {
-        const mimeType = audioChunksRef.current[0].type || 'audio/webm';
-        finalBlob = new Blob(audioChunksRef.current, { type: mimeType });
-      } else {
-        // Fallback synthetic audible wav blob if hardware mic provided empty chunks
-        finalBlob = createSyntheticAudioBlob(durationSec);
-      }
-
-      const sizeBytes = finalBlob.size || Math.round(durationSec * 16000); // rough estimate if empty
+    const sizeBytes = finalBlob.size;
       const recId = `rec-${Date.now()}`;
       const newRecording: AudioRecording = {
         id: recId,
@@ -295,19 +410,12 @@ export function useAcousticCCTV() {
       }
 
       await saveRecordingToDB(newRecording);
-      await addEvent('saved', `Recording saved (${durationSec}s, ${peakDb} dB, re-triggered ${triggersCount}x)`, peakDb);
+      await addEvent('saved', `Recording saved (${durationSec}s, level ${peakDb}/100, re-triggered ${triggersCount}x)`, peakDb);
       await refreshRecordings();
-
-      audioChunksRef.current = [];
 
       // Run AI audio classification asynchronously
       if (settingsRef.current.enableAIClassification !== false) {
-        const hint = activeSoundHintRef.current;
-        activeSoundHintRef.current = '';
-        if (hint) {
-          newRecording.notes = hint;
-        }
-        classifyAudioRecording(newRecording, hint)
+        classifyAudioRecording(newRecording, newRecording.notes, settingsRef.current.apiBaseUrl, settingsRef.current.apiAccessToken)
           .then(async (classification) => {
             newRecording.classification = classification;
             await saveRecordingToDB(newRecording);
@@ -325,7 +433,6 @@ export function useAcousticCCTV() {
             console.warn('AI Audio Classification error:', err);
           });
       }
-    }, 150);
   }, [addEvent, refreshRecordings]);
 
   // Audio analysis and sound surveillance loop
@@ -340,30 +447,51 @@ export function useAcousticCCTV() {
       analyser.getByteFrequencyData(dataArray);
       analyser.getFloatTimeDomainData(timeDomainArray);
 
-      // Compute RMS amplitude
+      // Combine an adaptive RMS gate with transient and high-frequency energy cues.
       let sumSquares = 0;
+      let peakAmplitude = 0;
+      let highFrequencyEnergy = 0;
+      let totalFrequencyEnergy = 0;
+      const sampleRate = audioContextRef.current?.sampleRate ?? 44100;
+      for (let i = 0; i < dataArray.length; i++) {
+        const frequency = (i * sampleRate) / analyser.fftSize;
+        const binDb = analyser.minDecibels + (dataArray[i] / 255) * (analyser.maxDecibels - analyser.minDecibels);
+        const amplitude = Math.pow(10, binDb / 20);
+        const energy = amplitude * amplitude;
+        totalFrequencyEnergy += energy;
+        if (frequency >= 2500) highFrequencyEnergy += energy;
+      }
       for (let i = 0; i < timeDomainArray.length; i++) {
         sumSquares += timeDomainArray[i] * timeDomainArray[i];
+        peakAmplitude = Math.max(peakAmplitude, Math.abs(timeDomainArray[i]));
       }
       const rms = Math.sqrt(sumSquares / timeDomainArray.length);
       const rawDb = calculateDecibelsFromRMS(rms);
-      let soundScore = mapDecibelsToScale(rawDb);
-
-      // Apply simulated spike if active
-      if (simulationSpikeRef.current > 0) {
-        soundScore = Math.max(soundScore, simulationSpikeRef.current);
-        // decay simulation spike
-        simulationSpikeRef.current = Math.max(0, simulationSpikeRef.current - 2);
-      }
-
-      setCurrentDecibels(rawDb);
-      setCurrentSoundLevel(soundScore);
-
+      const peakDb = calculateDecibelsFromRMS(peakAmplitude);
+      smoothedDbRef.current += (rawDb - smoothedDbRef.current) * (rawDb > smoothedDbRef.current ? 0.45 : 0.12);
       const threshold = settingsRef.current.sensitivityThreshold;
       const postRoll = settingsRef.current.postRollSeconds;
-      const hasSound = isSoundDetected(soundScore, threshold);
       const state = recordingStateRef.current;
       const now = Date.now();
+      const absoluteGateDb = -70 + threshold * 0.65;
+      const adaptiveGateDb = Math.max(absoluteGateDb, noiseFloorDbRef.current + 6);
+      const releaseGateDb = Math.max(absoluteGateDb - 4, noiseFloorDbRef.current + 3);
+      const highFrequencyRatio = highFrequencyEnergy / Math.max(1e-12, totalFrequencyEnergy);
+      const crestDb = peakDb - rawDb;
+      const impulse = peakDb >= Math.max(absoluteGateDb + 8, noiseFloorDbRef.current + 14)
+        && crestDb >= 7 && highFrequencyRatio >= 0.18;
+      const aboveGate = smoothedDbRef.current >= (state.isRecording ? releaseGateDb : adaptiveGateDb);
+      if (!state.isRecording && aboveGate) aboveGateFramesRef.current += 1;
+      else if (!aboveGate) aboveGateFramesRef.current = 0;
+      const hasSound = impulse || (state.isRecording ? aboveGate : aboveGateFramesRef.current >= 2);
+      if (!state.isRecording && !hasSound) {
+        noiseFloorDbRef.current = Math.max(-72, Math.min(-35,
+          noiseFloorDbRef.current + (rawDb - noiseFloorDbRef.current) * 0.015));
+      }
+      const soundScore = mapDecibelsToScale(smoothedDbRef.current);
+      const eventScore = impulse ? Math.max(soundScore, mapDecibelsToScale(peakDb)) : soundScore;
+      setCurrentDecibels(smoothedDbRef.current);
+      setCurrentSoundLevel(eventScore);
 
       if (hasSound) {
         // Sound is active right now!
@@ -372,7 +500,7 @@ export function useAcousticCCTV() {
           state.isRecording = true;
           state.startTime = now;
           state.lastSoundTime = now;
-          state.peakLevel = soundScore;
+          state.peakLevel = eventScore;
           state.samplesCount = 1;
           state.totalLevel = soundScore;
           state.triggersCount = 1;
@@ -383,24 +511,17 @@ export function useAcousticCCTV() {
           setTriggersInCurrentSession(1);
           setRecordingDuration(0);
 
-          audioChunksRef.current = [];
-          if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'inactive') {
-            try {
-              mediaRecorderRef.current.start(250); // Emit chunks every 250ms
-            } catch (err) {
-              console.warn('Failed to start media recorder', err);
-            }
-          }
+          audioChunksRef.current = preRollChunksRef.current.splice(0);
 
           // Trigger immediate notification & alarm
           if (settingsRef.current.enableNotifications) {
-            notificationService.sendDetectionNotification(soundScore, 1);
+            notificationService.sendDetectionNotification(eventScore, 1);
           }
           if (settingsRef.current.enableVibration) {
             notificationService.triggerHaptic();
           }
           notificationService.playAlertBeep();
-          addEvent('detection', `Sound detected (${soundScore} dB)! Recording started`, soundScore);
+          addEvent('detection', `Sound detected (level ${eventScore}/100). Recording started`, eventScore);
         } else {
           // Already recording! Re-trigger extension!
           const timeSinceLastSound = now - state.lastSoundTime;
@@ -408,17 +529,18 @@ export function useAcousticCCTV() {
           if (timeSinceLastSound > 500) {
             state.triggersCount += 1;
             setTriggersInCurrentSession(state.triggersCount);
-            addEvent('extension', `Sound re-detected (${soundScore} dB)! Extended +10s`, soundScore);
+            addEvent('extension', `Sound re-detected (level ${eventScore}/100). Post-roll restarted`, eventScore);
           }
           state.lastSoundTime = now;
-          state.peakLevel = Math.max(state.peakLevel, soundScore);
-          state.totalLevel += soundScore;
+          state.peakLevel = Math.max(state.peakLevel, eventScore);
+          state.totalLevel += eventScore;
           state.samplesCount += 1;
           if (state.waveformPoints.length < 50) {
-            state.waveformPoints.push(soundScore);
+            state.waveformPoints.push(eventScore);
           }
           setSilenceCountdown(postRoll);
         }
+        setRecordingDuration(Math.round((now - state.startTime) / 100) / 10);
       } else {
         // Silence detected right now
         if (state.isRecording) {
@@ -447,6 +569,27 @@ export function useAcousticCCTV() {
     if (shouldArm) {
       try {
         setMicError(null);
+        if (isAndroidNativeApp()) {
+          const microphone = await backgroundMonitor.requestMicrophonePermission();
+          if (!microphone.granted) {
+            throw new Error('Microphone permission was not granted. Allow microphone access in Android app settings, then try again.');
+          }
+          const notifications = await backgroundMonitor.requestNotificationPermission();
+          await backgroundMonitor.startMonitoring({
+            threshold: settingsRef.current.sensitivityThreshold,
+            postRollSeconds: settingsRef.current.postRollSeconds,
+          });
+          const updatedSettings = { ...settingsRef.current, isArmed: true };
+          settingsRef.current = updatedSettings;
+          setSettings(updatedSettings);
+          await saveSettingsToDB(updatedSettings);
+          setIsMicActive(false);
+          addEvent('system', 'Android microphone service started; waiting for capture confirmation');
+          if (!notifications.granted) {
+            addEvent('warning', 'Android notification permission is off; enable notifications to see the monitor status in the notification shade');
+          }
+          return;
+        }
         // Acquire Screen Wake Lock so phone doesn't sleep
         if (settingsRef.current.enableScreenWakeLock) {
           await notificationService.acquireWakeLock();
@@ -490,27 +633,32 @@ export function useAcousticCCTV() {
 
           // Prepare MediaRecorder
           const mimeType = getSupportedAudioMimeType();
-          const recorder = new MediaRecorder(stream, { mimeType });
+          const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
           mediaRecorderRef.current = recorder;
 
           recorder.ondataavailable = (event) => {
             if (event.data && event.data.size > 0) {
-              audioChunksRef.current.push(event.data);
+              if (recordingStateRef.current.isRecording || finalizingRecordingRef.current) {
+                audioChunksRef.current.push(event.data);
+              } else {
+                preRollChunksRef.current.push(event.data);
+                while (preRollChunksRef.current.length > 5) preRollChunksRef.current.shift();
+              }
             }
           };
+          preRollChunksRef.current = [];
+          audioChunksRef.current = [];
+          recorder.start(250);
 
           setIsMicActive(true);
         } catch (micErr) {
-          console.warn('Physical microphone unavailable or denied. Operating in Simulated / Hybrid Acoustic mode', micErr);
-          // Create an oscillator node as fallback so surveillance loop can run smoothly
-          const synthOsc = ctx.createOscillator();
-          const synthGain = ctx.createGain();
-          synthGain.gain.value = 0.001; // nearly silent
-          synthOsc.connect(synthGain);
-          synthGain.connect(analyser);
-          synthOsc.start();
+          mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+          mediaStreamRef.current = null;
+          await ctx.close().catch(() => {});
+          audioContextRef.current = null;
+          analyserRef.current = null;
           setIsMicActive(false);
-          setMicError('Hardware mic not detected or permission denied. Using Simulated Mic Sentinel mode.');
+          throw new Error(`Microphone capture could not start: ${micErr instanceof Error ? micErr.message : String(micErr)}`);
         }
 
         const updatedSettings = { ...settingsRef.current, isArmed: true };
@@ -524,6 +672,19 @@ export function useAcousticCCTV() {
         setMicError(err.message || 'Failed to initialize acoustic surveillance');
       }
     } else {
+      if (isAndroidNativeApp()) {
+        await backgroundMonitor.stopMonitoring();
+        const updatedSettings = { ...settingsRef.current, isArmed: false };
+        settingsRef.current = updatedSettings;
+        setSettings(updatedSettings);
+        await saveSettingsToDB(updatedSettings);
+        setIsMicActive(false);
+        setIsRecording(false);
+        setCurrentDecibels(-80);
+        setCurrentSoundLevel(0);
+        addEvent('system', 'Android microphone foreground service disarmed');
+        return;
+      }
       // Disarm
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
@@ -531,13 +692,33 @@ export function useAcousticCCTV() {
       }
 
       if (recordingStateRef.current.isRecording) {
-        finalizeRecording();
+        await finalizeRecording();
+      }
+
+      const recorder = mediaRecorderRef.current;
+      if (recorder?.state === 'recording') {
+        await new Promise<void>((resolve) => {
+          const timeout = window.setTimeout(resolve, 1500);
+          recorder.addEventListener('stop', () => {
+            window.clearTimeout(timeout);
+            resolve();
+          }, { once: true });
+          try {
+            recorder.stop();
+          } catch {
+            window.clearTimeout(timeout);
+            resolve();
+          }
+        });
       }
 
       if (mediaStreamRef.current) {
         mediaStreamRef.current.getTracks().forEach((t) => t.stop());
         mediaStreamRef.current = null;
       }
+      audioChunksRef.current = [];
+      preRollChunksRef.current = [];
+      finalizingRecordingRef.current = false;
 
       if (audioContextRef.current) {
         audioContextRef.current.close().catch(() => {});
@@ -582,37 +763,14 @@ export function useAcousticCCTV() {
     setSettings(updated);
     settingsRef.current = updated;
     await saveSettingsToDB(updated);
+    if (isAndroidNativeApp() && updated.isArmed) {
+      await backgroundMonitor.updateMonitorSettings({
+        threshold: updated.sensitivityThreshold,
+        postRollSeconds: updated.postRollSeconds,
+      }).catch((error) => console.warn('Could not update native monitor settings', error));
+    }
     refreshRecordings();
   }, [refreshRecordings]);
-
-  // Simulate sound spike (e.g. 85 dB glass break, footsteps, voice, door knock)
-  const simulateSoundSpike = useCallback((decibels: number = 75, hint?: string) => {
-    simulationSpikeRef.current = decibels;
-    if (hint) {
-      activeSoundHintRef.current = hint;
-    }
-    // synthesize audible beep in context if available
-    notificationService.playAlertBeep();
-  }, []);
-
-  // Add a labeled sample to the audit trail without arming the microphone.
-  const simulateDemoEvent = useCallback((decibels: number, hint: string) => {
-    const tag = hint || 'Demo sound';
-    const normalizedTag = tag.toLowerCase();
-    const threatLevel: ThreatLevel = normalizedTag.includes('glass') || normalizedTag.includes('alarm')
-      ? 'high'
-      : normalizedTag.includes('door')
-        ? 'medium'
-        : 'low';
-
-    void addEvent(
-      'detection',
-      `Demo event: ${tag}. No audio was recorded.`,
-      decibels,
-      undefined,
-      threatLevel
-    );
-  }, [addEvent]);
 
   // Classify existing recording on demand from Vault
   const classifyExistingRecording = useCallback(
@@ -620,7 +778,7 @@ export function useAcousticCCTV() {
       const rec = recordingsRef.current.find((r) => r.id === id);
       if (!rec) return;
       try {
-        const classification = await classifyAudioRecording(rec, rec.notes);
+        const classification = await classifyAudioRecording(rec, rec.notes, settingsRef.current.apiBaseUrl, settingsRef.current.apiAccessToken);
         rec.classification = classification;
         await saveRecordingToDB(rec);
         await addEvent(
@@ -679,11 +837,10 @@ export function useAcousticCCTV() {
     recordingDuration,
     triggersInCurrentSession,
     isMicActive,
+    pendingNativeRecordings,
     micError,
     storageWarningActive,
-    simulateSoundSpike,
     classifyExistingRecording,
-    simulateDemoEvent,
     deleteRecording,
     toggleProtect,
     clearUnprotectedRecordings,
@@ -706,45 +863,4 @@ function getSupportedAudioMimeType(): string {
     }
   }
   return '';
-}
-
-/**
- * Creates a synthetic valid WAV audio blob for environments without hardware mic inputs
- */
-function createSyntheticAudioBlob(durationSeconds: number): Blob {
-  const sampleRate = 8000;
-  const numSamples = Math.floor(sampleRate * durationSeconds);
-  const buffer = new ArrayBuffer(44 + numSamples * 2);
-  const view = new DataView(buffer);
-
-  // RIFF header
-  writeString(view, 0, 'RIFF');
-  view.setUint32(4, 36 + numSamples * 2, true);
-  writeString(view, 8, 'WAVE');
-  writeString(view, 12, 'fmt ');
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true); // PCM
-  view.setUint16(22, 1, true); // mono
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 2, true);
-  view.setUint16(32, 2, true);
-  view.setUint16(34, 16, true); // 16-bit
-  writeString(view, 36, 'data');
-  view.setUint32(40, numSamples * 2, true);
-
-  // Generate synthetic tone with slight noise
-  for (let i = 0; i < numSamples; i++) {
-    const t = i / sampleRate;
-    const sample = Math.sin(2 * Math.PI * 440 * t) * 0.3 * Math.exp(-t * 0.5);
-    const intSample = Math.max(-32768, Math.min(32767, Math.floor(sample * 32767)));
-    view.setInt16(44 + i * 2, intSample, true);
-  }
-
-  return new Blob([buffer], { type: 'audio/wav' });
-}
-
-function writeString(view: DataView, offset: number, string: string) {
-  for (let i = 0; i < string.length; i++) {
-    view.setUint8(offset + i, string.charCodeAt(i));
-  }
 }

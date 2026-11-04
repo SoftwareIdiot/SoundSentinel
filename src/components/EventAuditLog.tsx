@@ -166,7 +166,7 @@ export const EventAuditLog: React.FC<EventAuditLogProps> = ({ events }) => {
                       </span>
                       {evt.decibels !== undefined && (
                         <span className="text-[10px] text-emerald-400 font-bold">
-                          {evt.decibels} dB
+                          Level {evt.decibels}/100
                         </span>
                       )}
                       {evt.confidence !== undefined && (

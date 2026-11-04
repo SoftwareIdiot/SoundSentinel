@@ -8,6 +8,8 @@ export interface AudioClassification {
   explanation: string;
   detectedAt: number;
   engine: 'gemini' | 'acoustic-heuristic';
+  providerStatus?: 'ready' | 'not_configured' | 'quota_exhausted' | 'credentials_invalid' | 'server_unreachable' | 'server_error' | 'unavailable';
+  providerMessage?: string;
 }
 
 export interface AudioRecording {
@@ -43,6 +45,8 @@ export interface CCTVSettings {
   enableScreenWakeLock: boolean;
   enableKeepAliveAudio: boolean;
   enableAIClassification: boolean; // Toggle for AI Audio Classifier
+  apiBaseUrl?: string; // Optional laptop/server URL for the Android APK
+  apiAccessToken?: string; // Optional shared token for a laptop-hosted dev server
 }
 
 export interface StorageStats {

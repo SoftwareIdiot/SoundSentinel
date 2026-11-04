@@ -10,6 +10,26 @@ dotenv.config();
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
+// Capacitor's Android WebView calls the laptop API cross-origin. The desktop
+// development page also calls the API by Wi-Fi IP, so allow only its local origin.
+const allowedAppOrigins = new Set([
+  'https://localhost',
+  'http://localhost',
+  'capacitor://localhost',
+  'http://localhost:3000',
+]);
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && allowedAppOrigins.has(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  }
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
 // Parse large payloads for audio base64 buffers
 app.use(express.json({ limit: '50mb' }));
 
@@ -17,7 +37,7 @@ app.use(express.json({ limit: '50mb' }));
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY || '',
   httpOptions: {
-    timeout: 10000,
+    timeout: 40000,
     retryOptions: {
       attempts: 1,
       initialDelay: 1,
@@ -40,97 +60,129 @@ interface ClassifyRequestBody {
   simulatedTag?: string;
 }
 
+interface WavAcousticFeatures {
+  periodicBurstCount: number;
+  medianBurstSeconds: number;
+  burstIntervalVariation: number;
+  shortLoudTransient: boolean;
+}
+
+/** Extract simple timing and impulse cues from native PCM WAV clips for offline fallback. */
+function analyzePcmWav(body: ClassifyRequestBody): WavAcousticFeatures | undefined {
+  if (!body.audioBase64 || !body.mimeType?.toLowerCase().includes('wav')) return undefined;
+  try {
+    const encoded = body.audioBase64.includes(',') ? body.audioBase64.split(',')[1] : body.audioBase64;
+    const audio = Buffer.from(encoded, 'base64');
+    if (audio.length < 44 || audio.toString('ascii', 0, 4) !== 'RIFF' || audio.toString('ascii', 8, 12) !== 'WAVE') return undefined;
+
+    let format = 0, channels = 0, sampleRate = 0, bitsPerSample = 0;
+    let dataOffset = -1, dataLength = 0;
+    for (let offset = 12; offset + 8 <= audio.length;) {
+      const chunkName = audio.toString('ascii', offset, offset + 4);
+      const chunkLength = audio.readUInt32LE(offset + 4);
+      const chunkStart = offset + 8;
+      if (chunkStart + chunkLength > audio.length) return undefined;
+      if (chunkName === 'fmt ' && chunkLength >= 16) {
+        format = audio.readUInt16LE(chunkStart);
+        channels = audio.readUInt16LE(chunkStart + 2);
+        sampleRate = audio.readUInt32LE(chunkStart + 4);
+        bitsPerSample = audio.readUInt16LE(chunkStart + 14);
+      } else if (chunkName === 'data') {
+        dataOffset = chunkStart;
+        dataLength = chunkLength;
+      }
+      offset = chunkStart + chunkLength + (chunkLength % 2);
+    }
+    if (format !== 1 || channels < 1 || bitsPerSample !== 16 || sampleRate < 4000 || dataOffset < 0) return undefined;
+
+    const samples = Math.floor(dataLength / (channels * 2));
+    if (samples < sampleRate / 4 || samples > sampleRate * 120) return undefined;
+    const frameSamples = Math.max(1, Math.round(sampleRate * 0.02));
+    const rmsFrames: number[] = [];
+    const peakFrames: number[] = [];
+    for (let start = 0; start < samples; start += frameSamples) {
+      const end = Math.min(samples, start + frameSamples);
+      let squareSum = 0, peak = 0, count = 0;
+      for (let sampleIndex = start; sampleIndex < end; sampleIndex++) {
+        let mixed = 0;
+        for (let channel = 0; channel < channels; channel++) {
+          mixed += audio.readInt16LE(dataOffset + (sampleIndex * channels + channel) * 2) / 32768;
+        }
+        mixed /= channels;
+        squareSum += mixed * mixed;
+        peak = Math.max(peak, Math.abs(mixed));
+        count++;
+      }
+      rmsFrames.push(Math.sqrt(squareSum / Math.max(1, count)));
+      peakFrames.push(peak);
+    }
+
+    const sortedRms = [...rmsFrames].sort((a, b) => a - b);
+    const noiseFloor = sortedRms[Math.floor(sortedRms.length * 0.2)] ?? 0;
+    const upperTypical = sortedRms[Math.floor(sortedRms.length * 0.75)] ?? 0;
+    const activityGate = Math.max(0.012, noiseFloor * 2.5, upperTypical * 0.12);
+    const active = rmsFrames.map((rms) => rms >= activityGate);
+    // Merge one-frame gaps caused by frame alignment or a sound's envelope.
+    for (let i = 1; i < active.length - 1; i++) {
+      if (!active[i] && active[i - 1] && active[i + 1]) active[i] = true;
+    }
+    const bursts: Array<{ start: number; end: number }> = [];
+    for (let i = 0; i < active.length;) {
+      if (!active[i]) { i++; continue; }
+      const start = i;
+      while (i < active.length && active[i]) i++;
+      if (i - start >= 3) bursts.push({ start, end: i });
+    }
+
+    const periodicBursts = bursts.filter((burst) => {
+      const duration = (burst.end - burst.start) * 0.02;
+      return duration >= 0.06 && duration <= 1.5;
+    });
+    const intervals = periodicBursts.slice(1).map((burst, index) => (burst.start - periodicBursts[index].start) * 0.02);
+    const meanInterval = intervals.length ? intervals.reduce((sum, value) => sum + value, 0) / intervals.length : 0;
+    const burstIntervalVariation = intervals.length > 1 && meanInterval > 0
+      ? Math.sqrt(intervals.reduce((sum, value) => sum + (value - meanInterval) ** 2, 0) / intervals.length) / meanInterval
+      : 0;
+    const medianBurstSeconds = periodicBursts.length
+      ? [...periodicBursts.map((burst) => (burst.end - burst.start) * 0.02)].sort((a, b) => a - b)[Math.floor(periodicBursts.length / 2)]
+      : 0;
+    const periodicBurstCount = periodicBursts.length >= 3
+      && meanInterval >= 0.25 && meanInterval <= 2.2 && burstIntervalVariation <= 0.32
+      ? periodicBursts.length : 0;
+    const shortLoudTransient = bursts.some((burst) => {
+      const duration = (burst.end - burst.start) * 0.02;
+      const peak = Math.max(...peakFrames.slice(burst.start, burst.end));
+      return duration <= 0.16 && peak >= 0.35;
+    });
+
+    return { periodicBurstCount, medianBurstSeconds, burstIntervalVariation, shortLoudTransient };
+  } catch {
+    return undefined;
+  }
+}
+
 // Fallback heuristic acoustic classifier
 function fallbackHeuristicClassify(body: ClassifyRequestBody) {
-  const peak = body.peakDecibels ?? 60;
-  const avg = body.avgDecibels ?? 45;
-  const duration = body.duration ?? 5;
-  const hint = body.simulatedTag?.toLowerCase() || '';
-
-  if (hint.includes('glass')) {
+  const audio = analyzePcmWav(body);
+  if (audio?.periodicBurstCount) {
+    const footstepsLike = audio.medianBurstSeconds <= 0.18;
     return {
-      tag: 'Glass Breaking',
-      category: 'threat',
-      threatLevel: 'high',
-      confidence: 0.94,
-      explanation: 'High-frequency transient acoustic burst detected, consistent with glass shatter or perimeter breach.',
+      tag: footstepsLike ? 'Footsteps' : 'Alarm / Siren',
+      category: footstepsLike ? 'intrusion' : 'threat',
+      threatLevel: footstepsLike ? 'medium' : 'high',
+      confidence: footstepsLike ? 0.62 : 0.68,
+      explanation: `Gemini was unavailable. The local WAV fallback found ${audio.periodicBurstCount} regularly spaced sound bursts; treat this label as tentative.`,
       engine: 'acoustic-heuristic',
     };
   }
 
-  if (peak >= 90) {
+  if (audio?.shortLoudTransient) {
     return {
       tag: 'Loud Impact / Bang',
       category: 'threat',
-      threatLevel: 'high',
-      confidence: 0.88,
-      explanation: 'Severe acoustic impulse exceeding safe surveillance baseline.',
-      engine: 'acoustic-heuristic',
-    };
-  }
-
-  if (peak >= 85 && avg >= 65) {
-    return {
-      tag: 'Glass Breaking',
-      category: 'threat',
-      threatLevel: 'high',
-      confidence: 0.94,
-      explanation: 'High-frequency transient acoustic burst detected, consistent with glass shatter or perimeter breach.',
-      engine: 'acoustic-heuristic',
-    };
-  }
-
-  if (hint.includes('footstep') || (peak >= 40 && peak <= 55 && duration > 3)) {
-    return {
-      tag: 'Footsteps',
-      category: 'intrusion',
       threatLevel: 'medium',
-      confidence: 0.86,
-      explanation: 'Rhythmic low-amplitude floor resonance detected, indicating human movement.',
-      engine: 'acoustic-heuristic',
-    };
-  }
-
-  if (hint.includes('voice') || hint.includes('speech') || (peak >= 50 && peak <= 70 && duration >= 2)) {
-    return {
-      tag: 'Human Voice / Speech',
-      category: 'speech',
-      threatLevel: 'low',
-      confidence: 0.91,
-      explanation: 'Harmonic vocal formants and speech cadence detected within speech frequencies.',
-      engine: 'acoustic-heuristic',
-    };
-  }
-
-  if (hint.includes('knock') || (peak >= 68 && peak <= 82 && duration < 5)) {
-    return {
-      tag: 'Door Knock',
-      category: 'intrusion',
-      threatLevel: 'medium',
-      confidence: 0.89,
-      explanation: 'Staccato percussive wooden impulses identified consistent with door knock.',
-      engine: 'acoustic-heuristic',
-    };
-  }
-
-  if (hint.includes('bark') || hint.includes('dog')) {
-    return {
-      tag: 'Dog Barking',
-      category: 'domestic',
-      threatLevel: 'medium',
-      confidence: 0.93,
-      explanation: 'Repetitive canine vocalization burst detected.',
-      engine: 'acoustic-heuristic',
-    };
-  }
-
-  if (peak >= 90) {
-    return {
-      tag: 'Loud Impact / Bang',
-      category: 'threat',
-      threatLevel: 'high',
-      confidence: 0.88,
-      explanation: 'Severe acoustic impulse exceeding safe surveillance baseline.',
+      confidence: 0.58,
+      explanation: 'Gemini was unavailable. The local WAV fallback found a brief, strong audio transient; it cannot reliably distinguish an impact from other sharp sounds.',
       engine: 'acoustic-heuristic',
     };
   }
@@ -139,18 +191,34 @@ function fallbackHeuristicClassify(body: ClassifyRequestBody) {
     tag: 'Ambient Noise',
     category: 'ambient',
     threatLevel: 'info',
-    confidence: 0.75,
-    explanation: 'Low-threat general environmental sound event.',
+    confidence: 0.45,
+    explanation: 'Gemini was unavailable and the local audio cues were not distinctive enough to identify the sound confidently.',
     engine: 'acoustic-heuristic',
   };
 }
 
 // AI Audio Classification Endpoint
 app.post('/api/classify-audio', async (req, res) => {
+  const configuredToken = process.env.APP_API_TOKEN?.trim();
+  const remoteAddress = req.socket.remoteAddress || '';
+  const isLoopback = remoteAddress === '::1'
+    || remoteAddress === '127.0.0.1'
+    || remoteAddress.endsWith('::ffff:127.0.0.1');
+  if (!configuredToken && !isLoopback) {
+    return res.status(503).json({ error: 'Set APP_API_TOKEN before allowing LAN access to audio classification' });
+  }
+  if (configuredToken && req.get('authorization') !== `Bearer ${configuredToken}`) {
+    return res.status(401).json({ error: 'Unauthorized classification request' });
+  }
   const body = req.body as ClassifyRequestBody;
+  const geminiConfigured = Boolean(process.env.GEMINI_API_KEY?.trim() && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY');
+  let aiStatus = geminiConfigured ? 'unavailable' : 'not_configured';
+  let aiMessage = geminiConfigured
+    ? 'Gemini could not classify this clip; the local heuristic was used.'
+    : 'GEMINI_API_KEY is not configured on the laptop server; the local heuristic was used.';
 
   // If Gemini API key is available and audioBase64 or hint is provided, use Gemini
-  if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY') {
+  if (geminiConfigured) {
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     try {
       const parts: any[] = [];
@@ -169,15 +237,15 @@ app.post('/api/classify-audio', async (req, res) => {
         });
       }
 
-      const promptText = `You are a security acoustic CCTV AI surveillance classifier.
-Analyze this recorded sound event:
-- Peak Sound Level: ${body.peakDecibels ?? 'N/A'} dB
-- Average Sound Level: ${body.avgDecibels ?? 'N/A'} dB
+      const promptText = `You are an acoustic event classifier for a personal sound-monitoring app.
+Classify the actual attached audio when audio is present. The numeric fields are relative signal scores from 0 to 100, not calibrated sound-pressure measurements. Use them only as supporting context.
+- Relative peak signal level: ${body.peakDecibels ?? 'N/A'} / 100 (not calibrated dB SPL)
+- Relative average signal level: ${body.avgDecibels ?? 'N/A'} / 100
 - Duration: ${body.duration ?? 'N/A'} seconds
 - Re-triggers count: ${body.triggersCount ?? 1}
 ${body.simulatedTag ? `- Acoustic Signature Hint: ${body.simulatedTag}` : ''}
 
-Classify this sound into one of these specific security tags:
+Classify this sound into one of these tags:
 - 'Glass Breaking' (threat: high or critical)
 - 'Footsteps' (threat: medium)
 - 'Human Voice / Speech' (threat: low or info)
@@ -188,7 +256,7 @@ Classify this sound into one of these specific security tags:
 - 'Loud Impact / Crash' (threat: high)
 - 'Ambient Noise' (threat: info)
 
-Provide a concise, professional security classification.`;
+Base the result on audible evidence. If the clip is unclear, use 'Ambient Noise' with low confidence. Do not infer a person, break-in, or threat from loudness alone. Return a concise explanation and confidence that reflects uncertainty.`;
 
       parts.push({ text: promptText });
 
@@ -228,7 +296,7 @@ Provide a concise, professional security classification.`;
       });
 
       const timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => reject(new Error('Gemini API request timed out')), 12000);
+        timeoutId = setTimeout(() => reject(new Error('Gemini API request timed out')), 40000);
       });
 
       const response = await Promise.race([geminiPromise, timeoutPromise]);
@@ -240,11 +308,24 @@ Provide a concise, professional security classification.`;
       return res.json({
         ...result,
         engine: 'gemini',
+        aiStatus: 'ready',
+        aiMessage: 'Gemini classified this sound.',
         detectedAt: Date.now(),
       });
     } catch (geminiError: any) {
       if (timeoutId) clearTimeout(timeoutId);
-      console.warn('Gemini classification fallback to acoustic heuristic:', geminiError?.message);
+      const status = Number(geminiError?.status ?? geminiError?.code ?? 0);
+      if (status === 429) {
+        aiStatus = 'quota_exhausted';
+        aiMessage = 'Gemini API quota is exhausted or rate-limited. The local heuristic was used.';
+      } else if (status === 401 || status === 403) {
+        aiStatus = 'credentials_invalid';
+        aiMessage = 'Gemini rejected the server API key. The local heuristic was used.';
+      } else if (status === 404) {
+        aiStatus = 'unavailable';
+        aiMessage = 'The configured Gemini model is unavailable for this key. The local heuristic was used.';
+      }
+      console.warn(`Gemini classification fallback (${aiStatus}):`, status || 'request error');
     }
   }
 
@@ -252,6 +333,8 @@ Provide a concise, professional security classification.`;
   const heuristicResult = fallbackHeuristicClassify(body);
   return res.json({
     ...heuristicResult,
+    aiStatus,
+    aiMessage,
     detectedAt: Date.now(),
   });
 });
@@ -260,7 +343,8 @@ Provide a concise, professional security classification.`;
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'online',
-    hasGeminiKey: Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY'),
+    hasGeminiKey: Boolean(process.env.GEMINI_API_KEY?.trim() && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY'),
+    hasAppApiToken: Boolean(process.env.APP_API_TOKEN?.trim()),
     timestamp: Date.now(),
   });
 });

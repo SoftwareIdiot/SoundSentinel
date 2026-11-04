@@ -8,10 +8,8 @@ import {
   Sparkles,
   AlertTriangle,
   Info,
-  Radio,
   ChevronDown,
 } from 'lucide-react';
-import { CCTVRadar } from './CCTVRadar';
 import { CCTVSettings } from '../types';
 import { notificationService } from '../utils/notifications';
 
@@ -26,11 +24,11 @@ interface SurveillanceScreenProps {
   recordingDuration: number;
   triggersCount: number;
   isMicActive: boolean;
+  pendingNativeRecordings: number;
   micError: string | null;
   storageWarningActive: boolean;
   settings: CCTVSettings;
   onUpdateSettings: (newSettings: Partial<CCTVSettings>) => void;
-  onSimulateDemo: (db: number, hint: string) => void;
 }
 
 export const SurveillanceScreen: React.FC<SurveillanceScreenProps> = ({
@@ -44,11 +42,11 @@ export const SurveillanceScreen: React.FC<SurveillanceScreenProps> = ({
   recordingDuration,
   triggersCount,
   isMicActive,
+  pendingNativeRecordings,
   micError,
   storageWarningActive,
   settings,
   onUpdateSettings,
-  onSimulateDemo,
 }) => {
   const notifPermission = notificationService.getPermissionState();
 
@@ -102,11 +100,33 @@ export const SurveillanceScreen: React.FC<SurveillanceScreenProps> = ({
           <div className="flex-1">
             <span className="font-semibold block">{micError}</span>
             <span className="mt-1 block text-xs text-amber-200/80">
-              You can still use the <strong>Test Sound triggers</strong> below to verify sound detection, the 10-second post-roll countdown, and automated storage overwriting!
+              Check microphone access in Android settings, then arm the monitor again.
             </span>
           </div>
         </div>
       )}
+
+      <div className={`flex items-start gap-3 rounded-2xl border p-3.5 ${isMicActive ? 'border-emerald-800/70 bg-emerald-950/30' : 'border-slate-800 bg-slate-900/50'}`}>
+        <span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${isMicActive ? 'bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.6)]' : 'bg-slate-600'}`} />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+            <span className="text-xs font-bold text-slate-200">Microphone input</span>
+            <span className={`text-[10px] font-mono font-bold ${isMicActive ? 'text-emerald-300' : 'text-slate-400'}`}>
+              {isMicActive ? 'CAPTURE CONFIRMED' : isArmed ? 'WAITING FOR CAPTURE' : 'OFF'}
+            </span>
+          </div>
+          <p className="mt-1 text-[11px] leading-relaxed text-slate-400">
+            Live input {currentDecibels.toFixed(1)} dBFS · relative level {soundLevel}/100 · trigger {threshold}/100
+            {pendingNativeRecordings > 0 ? ` · ${pendingNativeRecordings} clip(s) waiting to import` : ''}
+          </p>
+          {isArmed && !isMicActive && !micError && (
+            <p className="mt-1 text-[11px] text-amber-300">Waiting for Android to confirm audio capture. If it stays here, disarm and arm again.</p>
+          )}
+          {isMicActive && soundLevel < threshold && (
+            <p className="mt-1 text-[11px] text-slate-500">Play a loud test sound. Lower Detection Sensitivity if the live level never reaches the trigger.</p>
+          )}
+        </div>
+      </div>
 
       {/* Storage Warning Banner */}
       {storageWarningActive && (
@@ -120,17 +140,22 @@ export const SurveillanceScreen: React.FC<SurveillanceScreenProps> = ({
         </div>
       )}
 
-      {/* Radar HUD View */}
-      <CCTVRadar
-        isArmed={isArmed}
-        soundLevel={soundLevel}
-        threshold={threshold}
-        rawDecibels={currentDecibels}
-        isRecording={isRecording}
-        silenceCountdown={silenceCountdown}
-        recordingDuration={recordingDuration}
-        triggersCount={triggersCount}
-      />
+      {isArmed && (
+        <div className={`rounded-2xl border px-4 py-3 ${isRecording ? 'border-red-900/70 bg-red-950/30' : 'border-slate-800 bg-slate-900/50'}`}>
+          <div className="flex items-center justify-between gap-3">
+            <span className={`text-xs font-bold ${isRecording ? 'text-red-200' : 'text-slate-300'}`}>
+              {isRecording ? `Recording · ${recordingDuration.toFixed(1)} s` : 'Listening for a sound'}
+            </span>
+            {isRecording && <span className="text-[11px] font-mono text-amber-300">quiet tail {silenceCountdown.toFixed(1)} s</span>}
+          </div>
+          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-800">
+            <div className={`h-full rounded-full transition-[width] duration-150 ${isRecording ? 'bg-red-400' : 'bg-emerald-400'}`} style={{ width: `${soundLevel}%` }} />
+          </div>
+          <p className="mt-1.5 text-[10px] text-slate-500">
+            {isRecording ? `The clip closes after ${settings.postRollSeconds} seconds below the sound gate · ${triggersCount} sound burst(s)` : 'The gate adapts to room noise; brief sharp sounds are also checked.'}
+          </p>
+        </div>
+      )}
 
       {/* Live CCTV Mode & Re-trigger Automation Indicator */}
       <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-4 space-y-4">
@@ -146,42 +171,13 @@ export const SurveillanceScreen: React.FC<SurveillanceScreenProps> = ({
           </span>
         </div>
 
-        {/* Sensitivity Presets */}
-        <div className="grid grid-cols-3 gap-2">
-          {[
-            { label: 'Low (Loud)', val: 65, desc: 'Claps, shouts' },
-            { label: 'Medium', val: 45, desc: 'Normal voice' },
-            { label: 'High (Sensitive)', val: 25, desc: 'Whispers, steps' },
-          ].map((preset) => (
-            <button
-              key={preset.label}
-              onClick={() => onUpdateSettings({ sensitivityThreshold: preset.val })}
-              className={`min-h-16 p-3 rounded-xl text-left border transition-all ${
-                threshold === preset.val
-                  ? 'bg-emerald-950/60 border-emerald-500/80 text-emerald-200'
-                  : 'bg-slate-950/50 border-slate-800 text-slate-400 hover:border-slate-700'
-              }`}
-            >
-              <div className="text-xs font-bold">{preset.label}</div>
-              <div className="mt-1 text-[11px] text-slate-400">{preset.desc}</div>
-            </button>
-          ))}
-        </div>
-
-        {/* Fine-grain threshold slider */}
         <div className="pt-1">
-          <input
-            type="range"
-            min="10"
-            max="90"
-            value={threshold}
+          <input type="range" min="10" max="90" value={threshold}
             onChange={(e) => onUpdateSettings({ sensitivityThreshold: Number(e.target.value) })}
             className="w-full accent-emerald-500 cursor-pointer h-2 bg-slate-800 rounded-lg appearance-none"
-            aria-label="Adjust sound sensitivity threshold"
-          />
-          <div className="flex justify-between text-[11px] text-slate-400 mt-2">
-            <span>High Sensitivity (Quiet)</span>
-            <span>Low Sensitivity (Loud)</span>
+            aria-label="Adjust sound sensitivity threshold" />
+          <div className="mt-2 flex justify-between text-[10px] text-slate-400">
+            <span>More sensitive</span><span>Only louder sounds</span>
           </div>
         </div>
       </div>
@@ -193,7 +189,7 @@ export const SurveillanceScreen: React.FC<SurveillanceScreenProps> = ({
         </summary>
         <div className="space-y-2 px-4 pb-4 text-sm leading-relaxed text-slate-400">
           <p>A sound above the selected threshold starts an audio recording. When it goes quiet, recording continues for 10 seconds. A new sound resets that countdown.</p>
-          <p className="rounded-xl border border-amber-900/60 bg-amber-950/30 p-3 text-xs text-amber-200/90">Keep this screen open while monitoring. Mobile browsers may pause microphone work when you switch apps or lock the phone.</p>
+          <p className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs text-slate-300">The Android app uses a foreground microphone service while armed. Allow its persistent notification and set battery use to Unrestricted for long background sessions.</p>
         </div>
       </details>
 
@@ -220,26 +216,10 @@ export const SurveillanceScreen: React.FC<SurveillanceScreenProps> = ({
             />
           </button>
         </div>
-        <p className="text-xs text-slate-400 leading-relaxed">
-          Gemini classifies recordings when the server key is configured. Without a key, the app uses its local heuristic classifier.
+        <p className="text-[11px] text-slate-400 leading-relaxed">
+          Sound detection runs locally. Gemini analyzes each saved clip through the laptop server when it is reachable; otherwise the app keeps the recording and marks the result as local.
         </p>
       </div>
-
-      <details className="group rounded-2xl border border-slate-800 bg-slate-900/60">
-        <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-semibold text-slate-200">
-          <span className="flex items-center gap-2"><Radio className="h-4 w-4 text-amber-400" />Try a demo event</span>
-          <ChevronDown className="h-4 w-4 shrink-0 text-slate-500 transition-transform group-open:rotate-180" />
-        </summary>
-        <div className="space-y-3 px-4 pb-4">
-          <p className="text-xs leading-relaxed text-slate-400">Adds a clearly labeled sample to the audit log. It does not arm the microphone, record audio, or contact Gemini.</p>
-          <div className="grid grid-cols-2 gap-2.5">
-            <button onClick={() => onSimulateDemo(88, 'Glass Breaking')} className="min-h-14 rounded-xl border border-red-900/50 bg-slate-800 p-3 text-left text-sm font-semibold text-red-200 transition hover:bg-slate-700 active:scale-[0.98]">Glass break <span className="mt-1 block text-xs font-normal text-slate-400">High alert</span></button>
-            <button onClick={() => onSimulateDemo(48, 'Footsteps')} className="min-h-14 rounded-xl border border-amber-900/50 bg-slate-800 p-3 text-left text-sm font-semibold text-amber-200 transition hover:bg-slate-700 active:scale-[0.98]">Footsteps <span className="mt-1 block text-xs font-normal text-slate-400">Movement</span></button>
-            <button onClick={() => onSimulateDemo(58, 'Human Voice / Speech')} className="min-h-14 rounded-xl border border-blue-900/50 bg-slate-800 p-3 text-left text-sm font-semibold text-blue-200 transition hover:bg-slate-700 active:scale-[0.98]">Human voice <span className="mt-1 block text-xs font-normal text-slate-400">Speech</span></button>
-            <button onClick={() => onSimulateDemo(75, 'Door Knock')} className="min-h-14 rounded-xl border border-slate-700 bg-slate-800 p-3 text-left text-sm font-semibold text-slate-100 transition hover:bg-slate-700 active:scale-[0.98]">Door knock <span className="mt-1 block text-xs font-normal text-slate-400">Impact</span></button>
-          </div>
-        </div>
-      </details>
 
       <div className="flex min-h-12 items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-900/50 px-4 py-3">
         <span className="flex items-center gap-2 text-sm text-slate-300">

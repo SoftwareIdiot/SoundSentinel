@@ -3,8 +3,13 @@ build/
 dist/
 dev-dist/
 .aistudio/
+.idea/
 coverage/
 .DS_Store
 *.log
+*.jks
+*.keystore
+android/app/release/
+android/.gradle-user-home/
 .env*
 !.env.example

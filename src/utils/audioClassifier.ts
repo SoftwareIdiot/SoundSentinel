@@ -27,7 +27,9 @@ export async function classifyAudioRecording(
     triggersCount: number;
     notes?: string;
   },
-  hintTag?: string
+  hintTag?: string,
+  apiBaseUrl?: string,
+  apiAccessToken?: string
 ): Promise<AudioClassification> {
   let audioBase64: string | undefined = undefined;
 
@@ -41,13 +43,15 @@ export async function classifyAudioRecording(
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    const timeoutId = setTimeout(() => controller.abort(), 45000);
 
     try {
-      const res = await fetch('/api/classify-audio', {
+      const baseUrl = (apiBaseUrl || '').trim().replace(/\/$/, '');
+      const res = await fetch(`${baseUrl}/api/classify-audio`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...(apiAccessToken ? { Authorization: `Bearer ${apiAccessToken}` } : {}),
         },
         signal: controller.signal,
         body: JSON.stringify({
@@ -71,17 +75,38 @@ export async function classifyAudioRecording(
           explanation: data.explanation || 'Sound event classified.',
           detectedAt: data.detectedAt || Date.now(),
           engine: data.engine || 'gemini',
+          providerStatus: data.aiStatus || (data.engine === 'gemini' ? 'ready' : undefined),
+          providerMessage: data.aiMessage,
         };
       }
+
+      const errorData = await res.json().catch(() => ({}));
+      const fallback = clientHeuristicClassify(recording, hintTag);
+      const providerStatus = res.status === 401 ? 'credentials_invalid' : 'server_error';
+      return {
+        ...fallback,
+        providerStatus,
+        providerMessage: errorData.error || `AI server returned HTTP ${res.status}; local heuristic used.`,
+      };
     } finally {
       clearTimeout(timeoutId);
     }
-  } catch (err) {
+  } catch {
     console.warn('Server classification unavailable or timed out, using on-device acoustic classifier');
+    const fallback = clientHeuristicClassify(recording, hintTag);
+    return {
+      ...fallback,
+      providerStatus: 'server_unreachable',
+      providerMessage: 'Laptop AI server is unreachable; this result came from the local heuristic.',
+    };
   }
 
   // Fully on-device client fallback if server/network is completely unreachable
-  return clientHeuristicClassify(recording, hintTag);
+  return {
+    ...clientHeuristicClassify(recording, hintTag),
+    providerStatus: 'server_unreachable',
+    providerMessage: 'Laptop AI server is unreachable; this result came from the local heuristic.',
+  };
 }
 
 /**
@@ -91,9 +116,6 @@ export function clientHeuristicClassify(
   recording: { peakDecibels: number; avgDecibels: number; duration: number; notes?: string },
   hintTag?: string
 ): AudioClassification {
-  const peak = recording.peakDecibels;
-  const avg = recording.avgDecibels;
-  const duration = recording.duration;
   const hint = (hintTag || recording.notes || '').toLowerCase();
 
   if (hint.includes('glass')) {
@@ -108,31 +130,7 @@ export function clientHeuristicClassify(
     };
   }
 
-  if (peak >= 90) {
-    return {
-      tag: 'Loud Impact / Bang',
-      category: 'threat',
-      threatLevel: 'high',
-      confidence: 0.88,
-      explanation: 'Severe acoustic impulse exceeding safe baseline.',
-      detectedAt: Date.now(),
-      engine: 'acoustic-heuristic',
-    };
-  }
-
-  if (peak >= 85 && avg >= 60) {
-    return {
-      tag: 'Glass Breaking',
-      category: 'threat',
-      threatLevel: 'high',
-      confidence: 0.94,
-      explanation: 'High-frequency transient acoustic burst detected, consistent with glass shatter.',
-      detectedAt: Date.now(),
-      engine: 'acoustic-heuristic',
-    };
-  }
-
-  if (hint.includes('footstep') || (peak >= 35 && peak <= 52 && duration >= 2)) {
+  if (hint.includes('footstep')) {
     return {
       tag: 'Footsteps',
       category: 'intrusion',
@@ -144,7 +142,7 @@ export function clientHeuristicClassify(
     };
   }
 
-  if (hint.includes('voice') || hint.includes('speech') || (peak >= 50 && peak <= 70)) {
+  if (hint.includes('voice') || hint.includes('speech')) {
     return {
       tag: 'Human Voice / Speech',
       category: 'speech',
@@ -156,7 +154,7 @@ export function clientHeuristicClassify(
     };
   }
 
-  if (hint.includes('knock') || (peak >= 68 && peak <= 82 && duration < 5)) {
+  if (hint.includes('knock')) {
     return {
       tag: 'Door Knock',
       category: 'intrusion',
@@ -180,24 +178,12 @@ export function clientHeuristicClassify(
     };
   }
 
-  if (peak >= 90) {
-    return {
-      tag: 'Loud Impact / Bang',
-      category: 'threat',
-      threatLevel: 'high',
-      confidence: 0.88,
-      explanation: 'Severe acoustic impulse exceeding safe baseline.',
-      detectedAt: Date.now(),
-      engine: 'acoustic-heuristic',
-    };
-  }
-
   return {
-    tag: 'Ambient Sound Event',
+    tag: 'Ambient Noise',
     category: 'ambient',
     threatLevel: 'info',
-    confidence: 0.78,
-    explanation: 'Low-threat general environmental sound event.',
+    confidence: 0.45,
+    explanation: 'The offline fallback only has clip-level loudness, which is not enough to identify a sound reliably.',
     detectedAt: Date.now(),
     engine: 'acoustic-heuristic',
   };

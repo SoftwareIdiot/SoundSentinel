@@ -1,57 +1,61 @@
-# SoundSentinel 🎙️
+# SoundSentinel
 
-### My offline acoustic-monitoring project
+I started SoundSentinel because I wanted to explore an acoustic version of CCTV on a phone: keep it armed and listening, but save a clip only when a sound event crosses the detection gate. I’m building it around two ideas: make event capture useful in practice, and keep audio processing and recordings on the device.
 
-Hi! I’m a **19-year-old first-year cybersecurity student**, and SoundSentinel is one of my hands-on projects. I’m exploring Android development, audio processing, and privacy-conscious security tools by building an acoustic version of CCTV.
+SoundSentinel is a native Android app written in Kotlin and Jetpack Compose. It is an evolving project, and sound detection can vary with the phone’s microphone and the room.
 
-The idea is simple: arm the phone, let it listen, and save a clip when it detects a sound event. It should listen continuously while armed, but recording starts only when the sound gate is crossed.
+## How monitoring works
 
-## What it can do
+1. **Arm the app.** SoundSentinel starts a foreground microphone service and shows an ongoing notification.
+2. **Listen for a change.** AUTO mode adapts its threshold to recent room noise. MANUAL mode uses the sensitivity setting in Preferences.
+3. **Save an event clip.** When sound crosses the gate, the app captures up to two seconds of pre-roll and keeps recording until the quiet period selected in Preferences has passed. A clip is capped at three minutes.
+4. **Review it on the phone.** Recordings appear in the local vault, where they can be played, searched, filtered, and protected from cleanup.
 
-- **Arm and listen:** Monitoring runs in an Android foreground service with a persistent notification.
-- **Adapt to room noise:** AUTO mode adjusts its threshold as the background changes. MANUAL mode uses the sensitivity set in Preferences.
-- **Capture sound events:** Clips include up to two seconds of pre-roll and continue for the quiet period selected in Preferences. A clip is capped at three minutes.
-- **Analyze recordings on the phone:** Optional signal processing looks for acoustic patterns and adds a best-effort label. This is local DSP, not a trained AI model or a cloud service, so labels can be wrong.
-- **Review and manage clips:** The vault supports playback, waveforms, searching, filtering, and protecting clips. Storage preferences include a quota and retention choices.
-- **Keep the app offline:** SoundSentinel does not request internet access. Clips and settings are stored in the app’s private storage on the phone; there is no cloud upload built in. No API key is needed.
+Optional signal analysis applies local DSP rules to a saved clip and suggests an acoustic label. These are best-effort heuristics, not a trained AI model or a verified security judgment; a label can be wrong.
 
-## Getting it on an Android phone
+## What I’m focusing on
 
-The easiest option is the [SoundSentinel 1.1 APK](https://github.com/SoftwareIdiot/SoundSentinel/releases/download/v1.1-offline-recording-fix-20261104/SoundSentinel-Offline-v1.1-CCTV-Fix.apk) from GitHub Releases. Download it on the phone, open it, and follow Android’s prompts to install it. If asked, allow your browser or Files app to install apps from that source. SoundSentinel will ask for microphone and notification permissions when needed.
+- Reliable event-triggered recording instead of recording continuously while armed.
+- An adaptive noise floor that follows changes in the room, with a manual sensitivity option.
+- A configurable quiet post-roll, pre-roll audio, and clear recording status.
+- Local clip review, a storage quota, retention options, and protection for clips I want to keep.
+- Keeping the app useful without an account, API key, or network connection.
 
-The project supports **Android 8.0 (API 26) and newer**. For monitoring to continue with the screen off, keep the foreground notification enabled. Some phone makers also apply battery rules that can interrupt background apps.
+## Privacy and practical limits
+
+SoundSentinel does not request internet access, and it has no cloud upload feature. Recordings and settings are written to the app’s private storage. Android device backup behavior is controlled by the phone’s system settings.
+
+The app needs microphone permission to monitor and notification permission to show its foreground service on supported Android versions. Monitoring is opt-in: tap **ARM SOUND SENTINEL** to start listening. Use it only where recording is lawful and appropriate, and with the consent required in your location.
+
+Microphones and background-app rules vary between Android phones. Keep the foreground notification enabled, and check the phone’s battery settings if it stops monitoring with the screen off. Detection is a learning project, not a certified alarm system; test it in the environment where you plan to use it.
+
+## Install the APK
+
+Download [SoundSentinel v1.1.apk](https://github.com/SoftwareIdiot/SoundSentinel/releases/download/v1.1-offline-recording-fix-20261104/SoundSentinel.v1.1.apk) from the final GitHub release. Open the downloaded file on Android and follow the install prompts. Android may ask you to allow your browser or Files app to install apps from that source. (GitHub replaces spaces in uploaded asset names with periods, so its filename is `SoundSentinel.v1.1.apk`.)
+
+The app supports Android 8.0 (API 26) and newer. The app is designed to run offline after installation. Building from source may need internet access once to download Gradle dependencies.
 
 ## Run from Android Studio
 
 1. Install Android Studio on your computer.
-2. Clone this repository:
+2. Clone the repository:
 
    ```bash
    git clone https://github.com/SoftwareIdiot/SoundSentinel.git
    ```
 
-3. Open the cloned `SoundSentinel` folder in Android Studio and let Gradle finish syncing.
+3. Open the cloned `SoundSentinel` folder in Android Studio and wait for Gradle sync to finish.
 4. Connect an Android phone with USB debugging enabled, or start an emulator.
-5. Select the device in Android Studio and press **Run**.
+5. Select the device and press **Run**.
 
-Gradle may need internet access to download build dependencies the first time. The installed app itself is designed to work offline.
+## Project map
 
-## A few places to explore in the code
+- `app/src/main/java/com/softwareidiot/soundsentinel/logic/AdaptiveAudioGate.kt` — estimates room noise and decides when an event starts.
+- `app/src/main/java/com/softwareidiot/soundsentinel/service/AcousticMonitorService.kt` — runs monitoring and saves detected clips.
+- `app/src/main/java/com/softwareidiot/soundsentinel/logic/AcousticClassifier.kt` — labels saved clips using local acoustic signal rules.
+- `app/src/main/java/com/softwareidiot/soundsentinel/data/repository/CctvRepository.kt` — stores recordings, settings, and event history.
+- `app/src/main/java/com/softwareidiot/soundsentinel/ui/screens/SurveillanceScreen.kt` — Home screen and arm/listen status.
 
-- `AdaptiveAudioGate.kt` — estimates background noise and decides when a sound event starts.
-- `AcousticMonitorService.kt` — keeps the microphone monitoring while the app is armed and saves event clips.
-- `AcousticClassifier.kt` — applies local signal-processing rules to label saved clips.
-- `SurveillanceScreen.kt` — contains the Home screen and arm/listen status.
+## How I want to grow it
 
-## Built with
-
-- Kotlin and Jetpack Compose
-- Android `AudioRecord` for microphone capture
-- A foreground microphone service for monitoring
-- Local files and settings for saved recordings and preferences
-
-## Where I’m taking it
-
-I’m building SoundSentinel as a learning project while studying cybersecurity. I’m especially interested in how mobile permissions, background services, local data storage, and audio signal processing fit together. I’m continuing to test it on real phones; microphones and room acoustics vary, so detection behavior may need tuning for a particular device.
-
-Suggestions and constructive feedback are welcome.
+I want to make event detection more dependable across different phones, understand false triggers and missed sounds better, and keep the recording and storage behavior easy to inspect. Feedback from testing in different rooms and on different devices is especially useful.

@@ -42,8 +42,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -70,7 +68,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.softwareidiot.soundsentinel.data.model.AudioQualityPreset
 import com.softwareidiot.soundsentinel.data.model.CCTVSettings
-import com.softwareidiot.soundsentinel.data.model.DetectionMode
 import com.softwareidiot.soundsentinel.ui.theme.BorderColor
 import com.softwareidiot.soundsentinel.ui.theme.CoralPrimary
 import com.softwareidiot.soundsentinel.ui.theme.CyanAccent
@@ -141,7 +138,7 @@ fun PreferencesScreen(
             .testTag("preferences_screen"),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // 1. Audio Detection Mode & Sensitivity Calibration Card
+        // 1. Automatic Detection Toggle
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -159,146 +156,52 @@ fun PreferencesScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         imageVector = Icons.Default.Tune,
-                        contentDescription = "Detection Mode",
+                        contentDescription = "Automatic event detection",
                         tint = CoralPrimary,
                         modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "AUDIO DETECTION SYSTEM",
-                        color = TextPrimary,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace
-                    )
-                }
-
-                // Segmented AUTO / MANUAL Toggle
-                Row(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(DarkSurfaceVariant)
-                        .padding(3.dp)
-                ) {
-                    val isAuto = settings.detectionMode == DetectionMode.AUTO
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(
-                                brush = if (isAuto) {
-                                    Brush.horizontalGradient(listOf(CoralPrimary, GoldAccent))
-                                } else {
-                                    Brush.horizontalGradient(listOf(Color.Transparent, Color.Transparent))
-                                }
-                            )
-                            .clickable { onUpdateSettings(settings.copy(detectionMode = DetectionMode.AUTO)) }
-                            .padding(horizontal = 12.dp, vertical = 5.dp)
-                    ) {
+                    Column {
                         Text(
-                            text = "AUTO",
-                            color = if (isAuto) Color.White else TextSecondary,
-                            fontSize = 11.sp,
+                            text = "AUTOMATIC EVENT DETECTION",
+                            color = TextPrimary,
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace
                         )
-                    }
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(
-                                brush = if (!isAuto) {
-                                    Brush.horizontalGradient(listOf(CoralPrimary, VioletAccent))
-                                } else {
-                                    Brush.horizontalGradient(listOf(Color.Transparent, Color.Transparent))
-                                }
-                            )
-                            .clickable { onUpdateSettings(settings.copy(detectionMode = DetectionMode.MANUAL)) }
-                            .padding(horizontal = 12.dp, vertical = 5.dp)
-                    ) {
                         Text(
-                            text = "MANUAL",
-                            color = if (!isAuto) Color.White else TextSecondary,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace
+                            text = if (settings.automaticDetectionEnabled) "ON - adaptive gate active" else "OFF - listening only",
+                            color = if (settings.automaticDetectionEnabled) GoldAccent else TextMuted,
+                            fontSize = 10.sp
                         )
                     }
                 }
+                Switch(
+                    checked = settings.automaticDetectionEnabled,
+                    onCheckedChange = { onUpdateSettings(settings.copy(automaticDetectionEnabled = it)) },
+                    colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = CoralPrimary)
+                )
             }
 
-            if (settings.detectionMode == DetectionMode.AUTO) {
-                Text(
-                    text = "Dynamic Auto-Sensitivity continuously adapts to your environment: when the room is quiet, sensitivity increases to capture faint whispers or footsteps; when the room is noisy, sensitivity scales down so only distinct sound spikes trigger recording.",
-                    color = TextSecondary,
-                    fontSize = 11.sp,
-                    lineHeight = 16.sp
-                )
+            Text(
+                text = if (settings.automaticDetectionEnabled) {
+                    "The gate adjusts to room noise automatically. No sensitivity slider; switch detection off to stop event clips while keeping live monitoring armed."
+                } else {
+                    "Live monitoring stays armed, but sound events will not start or extend recordings."
+                },
+                color = TextSecondary,
+                fontSize = 11.sp,
+                lineHeight = 16.sp
+            )
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text("Auto Margin Above Room Floor", color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                    Text("+${settings.autoSensitivityMargin} pts (Active Gate: $effectiveThreshold)", color = GoldAccent, fontSize = 12.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
-                }
-
-                Slider(
-                    value = settings.autoSensitivityMargin.toFloat(),
-                    onValueChange = { onUpdateSettings(settings.copy(autoSensitivityMargin = it.toInt())) },
-                    valueRange = 6f..30f,
-                    colors = SliderDefaults.colors(
-                        thumbColor = GoldAccent,
-                        activeTrackColor = CoralPrimary,
-                        inactiveTrackColor = DarkSurfaceVariant
-                    )
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text("Ultra-sensitive (+6)", color = TextMuted, fontSize = 10.sp)
-                    Text("Balanced (+12)", color = TextMuted, fontSize = 10.sp)
-                    Text("Loud sounds (+30)", color = TextMuted, fontSize = 10.sp)
-                }
-            } else {
-                Text(
-                    text = "Manual Mode locks the trigger gate to a fixed level. Lower the number for higher sensitivity to faint sounds, or raise it so only loud sounds start recording.",
-                    color = TextSecondary,
-                    fontSize = 11.sp,
-                    lineHeight = 16.sp
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text("Fixed Trigger Gate", color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                    Text("${settings.sensitivityThreshold} / 100", color = CyanAccent, fontSize = 12.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
-                }
-
-                Slider(
-                    value = settings.sensitivityThreshold.toFloat(),
-                    onValueChange = { onUpdateSettings(settings.copy(sensitivityThreshold = it.toInt())) },
-                    valueRange = 8f..90f,
-                    colors = SliderDefaults.colors(
-                        thumbColor = CyanAccent,
-                        activeTrackColor = VioletAccent,
-                        inactiveTrackColor = DarkSurfaceVariant
-                    )
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text("High sensitivity (8)", color = TextMuted, fontSize = 10.sp)
-                    Text("Medium (45)", color = TextMuted, fontSize = 10.sp)
-                    Text("Loud only (90)", color = TextMuted, fontSize = 10.sp)
-                }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("Current adaptive gate", color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Text("$effectiveThreshold / 100", color = GoldAccent, fontSize = 12.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
             }
         }
-
         // 2. Post-Roll Recording Hold Duration
         Column(
             modifier = Modifier

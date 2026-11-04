@@ -44,12 +44,6 @@ enum class CCTVEventType {
 }
 
 @Serializable
-enum class DetectionMode {
-    AUTO,
-    MANUAL
-}
-
-@Serializable
 enum class AudioQualityPreset(
     val sampleRate: Int,
     val label: String,
@@ -93,9 +87,7 @@ data class AudioRecording(
 @Serializable
 data class CCTVSettings(
     val isArmed: Boolean = false,
-    val detectionMode: DetectionMode = DetectionMode.AUTO,
-    val sensitivityThreshold: Int = 42, // Manual 0 - 100 scale
-    val autoSensitivityMargin: Int = 12, // Margin above ambient noise floor in AUTO mode (6 - 30)
+    val automaticDetectionEnabled: Boolean = true,
     val postRollSeconds: Int = 10, // Default 10s post-roll extension
     val audioQuality: AudioQualityPreset = AudioQualityPreset.STUDIO_44K,
     val storageQuotaMB: Int = 250, // Default 250 MB local quota

@@ -1,13 +1,13 @@
 package com.softwareidiot.soundsentinel.logic
 
-import com.softwareidiot.soundsentinel.data.model.DetectionMode
 import java.util.ArrayDeque
 
 /**
- * Converts microphone levels into event-start and event-hold decisions.
+ * Tracks the room's changing acoustic floor and emits event-start/hold decisions.
  *
- * The ambient estimate is based on the lower quartile of recent frames. This lets the gate learn
- * steady room noise without letting a short impact or burst immediately raise the threshold.
+ * AUTO detection has no user-tuned sensitivity value. It uses a fixed margin above a robust,
+ * rolling estimate of recent room noise. Large transients must be both loud above that floor and
+ * sufficiently sharp; peak-only microphone noise is not enough to open or hold a clip.
  */
 class AdaptiveAudioGate {
     data class Reading(
@@ -38,9 +38,7 @@ class AdaptiveAudioGate {
         peakDb: Double,
         crestDb: Double,
         frameDurationMs: Long,
-        detectionMode: DetectionMode,
-        sensitivityThreshold: Int,
-        autoSensitivityMargin: Int,
+        detectionEnabled: Boolean,
         clipActive: Boolean
     ): Reading {
         val frameMs = frameDurationMs.coerceAtLeast(1L)
@@ -52,50 +50,44 @@ class AdaptiveAudioGate {
             ambientWindowMs -= ambientFrames.removeFirst().durationMs
         }
 
-        val shouldUpdateFloor = isCalibrating || elapsedMs - lastFloorUpdateMs >= FLOOR_UPDATE_INTERVAL_MS
-        if (shouldUpdateFloor && ambientFrames.size >= MIN_FRAMES_FOR_ESTIMATE) {
-            val targetFloor = lowerQuartileDb()
+        if (ambientFrames.size >= MIN_FRAMES_FOR_ESTIMATE) {
             if (isCalibrating) {
-                noiseFloorDb = targetFloor.coerceIn(-72.0, -25.0)
-            } else {
-                val alpha = if (targetFloor > noiseFloorDb) FLOOR_RISE_ALPHA else FLOOR_FALL_ALPHA
+                noiseFloorDb = lowerQuartileDb().coerceIn(MIN_FLOOR_DB, MAX_FLOOR_DB)
+                lastFloorUpdateMs = elapsedMs
+            } else if (elapsedMs - lastFloorUpdateMs >= FLOOR_UPDATE_INTERVAL_MS) {
+                val targetFloor = lowerQuartileDb()
+                val alpha = when {
+                    targetFloor > noiseFloorDb && clipActive -> FLOOR_RISE_ALPHA_DURING_CLIP
+                    targetFloor > noiseFloorDb -> FLOOR_RISE_ALPHA
+                    else -> FLOOR_FALL_ALPHA
+                }
                 noiseFloorDb = (noiseFloorDb + (targetFloor - noiseFloorDb) * alpha)
-                    .coerceIn(-72.0, -25.0)
+                    .coerceIn(MIN_FLOOR_DB, MAX_FLOOR_DB)
+                lastFloorUpdateMs = elapsedMs
             }
-            lastFloorUpdateMs = elapsedMs
         }
 
         if (isCalibrating && elapsedMs >= CALIBRATION_MS && ambientFrames.size >= MIN_FRAMES_FOR_ESTIMATE) {
-            noiseFloorDb = lowerQuartileDb().coerceIn(-72.0, -25.0)
+            noiseFloorDb = lowerQuartileDb().coerceIn(MIN_FLOOR_DB, MAX_FLOOR_DB)
             isCalibrating = false
             lastFloorUpdateMs = elapsedMs
         }
 
-        val thresholdDb = when (detectionMode) {
-            DetectionMode.AUTO -> CctvLogic.computeAutoThresholdDb(noiseFloorDb, autoSensitivityMargin)
-            DetectionMode.MANUAL -> CctvLogic.manualThresholdDb(sensitivityThreshold)
-        }
+        val thresholdDb = CctvLogic.computeAutoThresholdDb(noiseFloorDb)
         val thresholdScale = CctvLogic.mapDecibelsToScale(thresholdDb).coerceIn(5, 95)
+        val activeGateDb = if (clipActive) thresholdDb - RELEASE_HYSTERESIS_DB else thresholdDb
+        val aboveGate = smoothedDb >= activeGateDb
 
-        // Peak-minus-9 dB catches short events while remaining comparable to the RMS gate.
-        val eventDb = maxOf(smoothedDb, peakDb - PEAK_TO_RMS_OFFSET_DB)
-        val aboveStartGate = eventDb >= thresholdDb
-        if (!clipActive && !isCalibrating) {
-            consecutiveLoudFrames = if (aboveStartGate) consecutiveLoudFrames + 1 else 0
+        if (detectionEnabled && !isCalibrating && aboveGate) {
+            consecutiveLoudFrames++
         } else {
             consecutiveLoudFrames = 0
         }
 
-        val transientGate = crestDb >= MIN_TRANSIENT_CREST_DB &&
-            peakDb - noiseFloorDb >= maxOf(MIN_TRANSIENT_FLOOR_MARGIN_DB, thresholdDb - noiseFloorDb + 4.0)
-
-        val detected = !isCalibrating && (
-            if (clipActive) {
-                transientGate || eventDb >= thresholdDb - RELEASE_HYSTERESIS_DB
-            } else {
-                transientGate || consecutiveLoudFrames >= REQUIRED_ATTACK_FRAMES
-            }
-        )
+        val requiredAttackFrames = if (clipActive) REQUIRED_HOLD_FRAMES else REQUIRED_ATTACK_FRAMES
+        val sustainedEvent = consecutiveLoudFrames >= requiredAttackFrames
+        val transientEvent = isStrongTransient(rmsDb, peakDb, crestDb)
+        val detected = detectionEnabled && !isCalibrating && (sustainedEvent || transientEvent)
 
         return Reading(
             noiseFloorDb = noiseFloorDb,
@@ -106,6 +98,15 @@ class AdaptiveAudioGate {
         )
     }
 
+    private fun isStrongTransient(rmsDb: Double, peakDb: Double, crestDb: Double): Boolean {
+        val peakAboveFloorDb = peakDb - noiseFloorDb
+        val rmsAboveFloorDb = rmsDb - noiseFloorDb
+        return crestDb >= MIN_TRANSIENT_CREST_DB &&
+            peakAboveFloorDb >= MIN_TRANSIENT_FLOOR_MARGIN_DB &&
+            rmsAboveFloorDb >= MIN_TRANSIENT_RMS_MARGIN_DB &&
+            peakDb >= MIN_TRANSIENT_PEAK_DB
+    }
+
     private fun lowerQuartileDb(): Double {
         val levels = ambientFrames.map { it.db }.sorted()
         val index = ((levels.size - 1) * AMBIENT_PERCENTILE).toInt().coerceIn(0, levels.lastIndex)
@@ -113,17 +114,22 @@ class AdaptiveAudioGate {
     }
 
     private companion object {
-        const val CALIBRATION_MS = 700L
-        const val AMBIENT_WINDOW_MS = 2_800L
+        const val CALIBRATION_MS = 1_200L
+        const val AMBIENT_WINDOW_MS = 2_000L
         const val FLOOR_UPDATE_INTERVAL_MS = 200L
-        const val MIN_FRAMES_FOR_ESTIMATE = 5
+        const val MIN_FRAMES_FOR_ESTIMATE = 8
         const val AMBIENT_PERCENTILE = 0.25
-        const val FLOOR_RISE_ALPHA = 0.28
-        const val FLOOR_FALL_ALPHA = 0.42
-        const val PEAK_TO_RMS_OFFSET_DB = 9.0
-        const val MIN_TRANSIENT_CREST_DB = 8.0
-        const val MIN_TRANSIENT_FLOOR_MARGIN_DB = 11.0
+        const val FLOOR_RISE_ALPHA = 0.35
+        const val FLOOR_RISE_ALPHA_DURING_CLIP = 0.60
+        const val FLOOR_FALL_ALPHA = 0.12
+        const val MIN_FLOOR_DB = -72.0
+        const val MAX_FLOOR_DB = -25.0
+        const val MIN_TRANSIENT_CREST_DB = 14.0
+        const val MIN_TRANSIENT_FLOOR_MARGIN_DB = 22.0
+        const val MIN_TRANSIENT_RMS_MARGIN_DB = 6.0
+        const val MIN_TRANSIENT_PEAK_DB = -32.0
         const val RELEASE_HYSTERESIS_DB = 3.0
-        const val REQUIRED_ATTACK_FRAMES = 2
+        const val REQUIRED_ATTACK_FRAMES = 4
+        const val REQUIRED_HOLD_FRAMES = 2
     }
 }

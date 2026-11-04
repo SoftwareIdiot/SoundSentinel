@@ -95,7 +95,7 @@ class AcousticMonitorService : Service() {
                     id = UUID.randomUUID().toString(),
                     timestamp = System.currentTimeMillis(),
                     type = CCTVEventType.SYSTEM,
-                    message = "SoundSentinel armed (${repository.settings.value.audioQuality.label} • ${repository.settings.value.detectionMode.name} mode)"
+                    message = "SoundSentinel armed (${repository.settings.value.audioQuality.label} • automatic detection ${if (repository.settings.value.automaticDetectionEnabled) "on" else "off"})"
                 )
             )
         }
@@ -251,9 +251,7 @@ class AcousticMonitorService : Service() {
                     peakDb = peakDb,
                     crestDb = crestDb,
                     frameDurationMs = frameDurationMs,
-                    detectionMode = currentSettings.detectionMode,
-                    sensitivityThreshold = currentSettings.sensitivityThreshold,
-                    autoSensitivityMargin = currentSettings.autoSensitivityMargin,
+                    detectionEnabled = currentSettings.automaticDetectionEnabled,
                     clipActive = clipStream != null
                 )
                 noiseFloorDb = gate.noiseFloorDb
@@ -291,7 +289,7 @@ class AcousticMonitorService : Service() {
                                 id = UUID.randomUUID().toString(),
                                 timestamp = now,
                                 type = CCTVEventType.DETECTION,
-                                message = "Sound detected ($eventLevel/100 >= trigger $effectiveThreshold/100 • ${currentSettings.detectionMode.name})",
+                                message = "Sound event detected ($eventLevel/100 reached automatic gate $effectiveThreshold/100)",
                                 decibels = eventLevel
                             )
                         )
@@ -549,7 +547,11 @@ class AcousticMonitorService : Service() {
             .setContentTitle(if (isRecording) "🔴 SoundSentinel • Recording Event ($rateKhz)" else "🎙️ SoundSentinel • Armed in Background ($rateKhz)")
             .setContentText(
                 if (isRecording) "Capturing audio with post-roll extension. Tap to open."
-                else "Continuous sound detection active. Tap Disarm to stop."
+                else if (repository.settings.value.automaticDetectionEnabled) {
+                    "Adaptive event detection active. Tap Disarm to stop."
+                } else {
+                    "Microphone monitoring active; event recording is off. Tap Disarm to stop."
+                }
             )
             .setOngoing(true)
             .setContentIntent(openPending)

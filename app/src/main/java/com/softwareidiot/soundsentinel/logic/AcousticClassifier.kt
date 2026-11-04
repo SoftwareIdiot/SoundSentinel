@@ -224,14 +224,27 @@ object AcousticClassifier {
         triggersCount: Int,
         userHint: String? = null
     ): AudioClassification {
-        val now = System.currentTimeMillis()
         val features = if (recordingFile != null && recordingFile.exists()) {
             extractFeaturesFromWav(recordingFile)
         } else null
+        return classifyFeatures(features, peakScore, avgScore, durationSeconds, triggersCount)
+    }
 
+    internal fun classifyFeatures(
+        features: AudioFeatures?,
+        peakScore: Int,
+        avgScore: Int,
+        durationSeconds: Double,
+        triggersCount: Int
+    ): AudioClassification {
+        val now = System.currentTimeMillis()
         if (features != null) {
             // High-frequency sharp transient: Glass Break / Sharp Snap
-            if (features.highFrequencyRatio >= 0.68 && features.crestFactorDb >= 9.5 && features.peakDb >= -32.0) {
+            if (features.highFrequencyRatio >= 0.72 &&
+                features.crestFactorDb >= 13.0 &&
+                features.peakDb >= -26.0 &&
+                peakScore >= 58
+            ) {
                 return AudioClassification(
                     tag = "Sharp High-Freq Transient",
                     category = AudioCategory.THREAT,
@@ -244,7 +257,7 @@ object AcousticClassifier {
             }
 
             // Sustained high tone: Alarm / Siren / Beep
-            if (features.sustainedHighTone) {
+            if (features.sustainedHighTone && features.avgDb >= -34.0 && features.peakDb >= -23.0) {
                 return AudioClassification(
                     tag = "Sustained Tone / Alarm",
                     category = AudioCategory.THREAT,
@@ -283,7 +296,7 @@ object AcousticClassifier {
             }
 
             // Loud short transient: Impact / Slam / Clap
-            if (features.shortLoudTransient && features.peakDb >= -22.0) {
+            if (features.shortLoudTransient && features.peakDb >= -18.0 && peakScore >= 65) {
                 return AudioClassification(
                     tag = "Loud Impact / Slam",
                     category = AudioCategory.THREAT,

@@ -319,6 +319,7 @@ class CctvRepository(private val context: Context) {
             )
 
             if (_settings.value.enableNotifications &&
+                peakScore >= 58 &&
                 (classification.threatLevel == ThreatLevel.HIGH || classification.threatLevel == ThreatLevel.CRITICAL)
             ) {
                 sendThreatNotification(classification, peakScore)

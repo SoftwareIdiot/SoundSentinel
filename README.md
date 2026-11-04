@@ -7,7 +7,7 @@ SoundSentinel is a native Android app written in Kotlin and Jetpack Compose. It 
 ## How monitoring works
 
 1. **Arm the app.** SoundSentinel starts a foreground microphone service and shows an ongoing notification.
-2. **Listen for a change.** AUTO mode adapts its threshold to recent room noise. MANUAL mode uses the sensitivity setting in Preferences.
+2. **Listen for a change.** Automatic event detection has one on/off switch in Preferences. When enabled, the gate adapts to recent room noise; there is no sensitivity slider.
 3. **Save an event clip.** When sound crosses the gate, the app captures up to two seconds of pre-roll and keeps recording until the quiet period selected in Preferences has passed. A clip is capped at three minutes.
 4. **Review it on the phone.** Recordings appear in the local vault, where they can be played, searched, filtered, and protected from cleanup.
 
@@ -31,7 +31,7 @@ Microphones and background-app rules vary between Android phones. Keep the foreg
 
 ## Install the APK
 
-Download [SoundSentinel v1.1.apk](https://github.com/SoftwareIdiot/SoundSentinel/releases/download/v1.1-offline-recording-fix-20261104/SoundSentinel.v1.1.apk) from the final GitHub release. Open the downloaded file on Android and follow the install prompts. Android may ask you to allow your browser or Files app to install apps from that source. (GitHub replaces spaces in uploaded asset names with periods, so its filename is `SoundSentinel.v1.1.apk`.)
+Download [SoundSentinel v1.2.apk](https://github.com/SoftwareIdiot/SoundSentinel/releases/download/v1.2-adaptive-audio-20261104/SoundSentinel.v1.2.apk) from the final GitHub release. Open the downloaded file on Android and follow the install prompts. Android may ask you to allow your browser or Files app to install apps from that source. (GitHub replaces spaces in uploaded asset names with periods, so its filename is `SoundSentinel.v1.2.apk`.)
 
 The app supports Android 8.0 (API 26) and newer. The app is designed to run offline after installation. Building from source may need internet access once to download Gradle dependencies.
 

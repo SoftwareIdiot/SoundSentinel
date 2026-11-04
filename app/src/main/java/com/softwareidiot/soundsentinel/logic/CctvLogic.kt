@@ -36,28 +36,20 @@ object CctvLogic {
         return max(0, min(100, score.roundToInt()))
     }
 
-    /** Converts the Auto sensitivity preference to a dB margin above the live room-noise floor. */
-    fun autoSensitivityMarginDb(autoMargin: Int): Double {
-        val normalized = autoMargin.coerceIn(6, 30) - 6
-        return 3.5 + normalized * 0.4375
-    }
+    /** Fixed margin for automatic detection; the gate itself follows the live room-noise floor. */
+    const val AUTO_GATE_MARGIN_DB = 12.0
 
-    /** Converts the Manual 0..100 gate to the dBFS scale used by the live detector. */
-    fun manualThresholdDb(threshold: Int): Double {
-        return (-72.0 + (threshold.coerceIn(5, 95) / 100.0) * 68.0).coerceIn(-68.0, -8.0)
-    }
-
-    /** Current Auto gate in dBFS, clamped away from the microphone's noise and clipping limits. */
-    fun computeAutoThresholdDb(noiseFloorDb: Double, autoMargin: Int = 12): Double {
-        return (noiseFloorDb + autoSensitivityMarginDb(autoMargin)).coerceIn(-68.0, -8.0)
+    /** Current automatic gate in dBFS, clamped away from the microphone's noise and clipping limits. */
+    fun computeAutoThresholdDb(noiseFloorDb: Double): Double {
+        return (noiseFloorDb + AUTO_GATE_MARGIN_DB).coerceIn(-68.0, -8.0)
     }
 
     /**
      * Computes the live Auto gate on the UI's 0..100 scale. The audio detector uses the same
      * threshold in dBFS, so the number shown in the waveform panel matches the actual gate.
      */
-    fun computeAutoThreshold(noiseFloorDb: Double, autoMargin: Int = 12): Int {
-        return mapDecibelsToScale(computeAutoThresholdDb(noiseFloorDb, autoMargin)).coerceIn(5, 95)
+    fun computeAutoThreshold(noiseFloorDb: Double): Int {
+        return mapDecibelsToScale(computeAutoThresholdDb(noiseFloorDb)).coerceIn(5, 95)
     }
 
     /**

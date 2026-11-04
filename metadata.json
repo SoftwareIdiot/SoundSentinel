@@ -1,5 +1,5 @@
 {
-  "name": "SoundSentinel - Acoustic CCTV Surveillance",
+  "name": "SoundSentinel",
   "description": "Smart mobile acoustic CCTV app that records audio on sound detection with 10s post-roll, automated background surveillance, storage quota limits, and oldest-first circular overwrite.",
   "requestFramePermissions": ["microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

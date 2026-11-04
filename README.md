@@ -1,30 +1,57 @@
-# SoundSentinel — Native Android Acoustic CCTV Surveillance
+# SoundSentinel 🎙️
 
-A native Android application written in Kotlin and Jetpack Compose for acoustic surveillance. SoundSentinel turns your device into an acoustic CCTV sensor that continuously monitors audio, captures sounds when they exceed an adaptive threshold with a 2-second pre-roll and 10-second post-roll extension, and manages circular storage.
+### My offline acoustic-monitoring project
 
-## Key Features
+Hi! I’m a **19-year-old first-year cybersecurity student**, and SoundSentinel is one of my hands-on projects. I’m exploring Android development, audio processing, and privacy-conscious security tools by building an acoustic version of CCTV.
 
-- **Acoustic Surveillance Engine:** Real-time 16 kHz 16-bit PCM microphone monitoring via `AudioRecord`.
-- **Adaptive Detection & Pre-roll:** Tracks ambient room noise floors and transient explosive peaks (e.g., glass breaking, door knocks, impacts) with a circular 2-second pre-roll buffer.
-- **10-Second Post-Roll Extension:** Recordings continue for 10 seconds after sound falls quiet. New sound triggers dynamically reset the 10-second countdown (up to 120s max clip).
-- **On-Device AI Classification:** Evaluates audio features (crest factor, burst intervals, spectral transients) on-device to classify security events:
-  - Glass Breaking (high threat)
-  - Footsteps (intrusion alert)
-  - Door Knock / Slam (intrusion)
-  - Human Voice / Speech (speech)
-  - Dog Barking (domestic)
-  - Alarm / Siren (critical threat)
-  - Ambient Noise (info)
-- **Recordings Vault:** Built-in audio player with waveform previews, playback speed controls (0.5x, 1x, 1.5x, 2x), scrubber, search, filter chips, clip locking/protection, and re-classification.
-- **Circular Storage Manager:** Rolling storage quota limit (e.g. 25 MB to 1 GB) with oldest-first circular overwrite, retention policies (1h, 6h, 24h, 3d, 7d, 30d, custom), and lock protection for important clips.
-- **Event Audit Log:** Complete real-time audit trail of triggers, extensions, saves, warnings, classifications, and system states.
-- **Background Foreground Service:** Dedicated microphone foreground service (`AcousticMonitorService`) with ongoing notification and wake-lock to maintain active surveillance when the screen turns off.
+The idea is simple: arm the phone, let it listen, and save a clip when it detects a sound event. It should listen continuously while armed, but recording starts only when the sound gate is crossed.
 
-## Tech Stack
+## What it can do
 
-- **Platform:** Android (Min SDK 26, Target SDK 35)
-- **Language:** Kotlin 2.1.0
-- **UI Toolkit:** Jetpack Compose (Material 3 Dark Surveillance Theme)
-- **Build System:** Gradle (Kotlin DSL), Android Gradle Plugin 8.8.2
-- **Audio Capture & Playback:** Native `AudioRecord` (16 kHz 16-bit PCM WAV) & `MediaPlayer`
-- **Data & Serialization:** `kotlinx.serialization` (JSON persistence) + StateFlow reactive architecture
+- **Arm and listen:** Monitoring runs in an Android foreground service with a persistent notification.
+- **Adapt to room noise:** AUTO mode adjusts its threshold as the background changes. MANUAL mode uses the sensitivity set in Preferences.
+- **Capture sound events:** Clips include up to two seconds of pre-roll and continue for the quiet period selected in Preferences. A clip is capped at three minutes.
+- **Analyze recordings on the phone:** Optional signal processing looks for acoustic patterns and adds a best-effort label. This is local DSP, not a trained AI model or a cloud service, so labels can be wrong.
+- **Review and manage clips:** The vault supports playback, waveforms, searching, filtering, and protecting clips. Storage preferences include a quota and retention choices.
+- **Keep the app offline:** SoundSentinel does not request internet access. Clips and settings are stored in the app’s private storage on the phone; there is no cloud upload built in. No API key is needed.
+
+## Getting it on an Android phone
+
+The easiest option is the [SoundSentinel 1.1 APK](https://github.com/SoftwareIdiot/SoundSentinel/releases/download/v1.1-offline-recording-fix-20261104/SoundSentinel-Offline-v1.1-CCTV-Fix.apk) from GitHub Releases. Download it on the phone, open it, and follow Android’s prompts to install it. If asked, allow your browser or Files app to install apps from that source. SoundSentinel will ask for microphone and notification permissions when needed.
+
+The project supports **Android 8.0 (API 26) and newer**. For monitoring to continue with the screen off, keep the foreground notification enabled. Some phone makers also apply battery rules that can interrupt background apps.
+
+## Run from Android Studio
+
+1. Install Android Studio on your computer.
+2. Clone this repository:
+
+   ```bash
+   git clone https://github.com/SoftwareIdiot/SoundSentinel.git
+   ```
+
+3. Open the cloned `SoundSentinel` folder in Android Studio and let Gradle finish syncing.
+4. Connect an Android phone with USB debugging enabled, or start an emulator.
+5. Select the device in Android Studio and press **Run**.
+
+Gradle may need internet access to download build dependencies the first time. The installed app itself is designed to work offline.
+
+## A few places to explore in the code
+
+- `AdaptiveAudioGate.kt` — estimates background noise and decides when a sound event starts.
+- `AcousticMonitorService.kt` — keeps the microphone monitoring while the app is armed and saves event clips.
+- `AcousticClassifier.kt` — applies local signal-processing rules to label saved clips.
+- `SurveillanceScreen.kt` — contains the Home screen and arm/listen status.
+
+## Built with
+
+- Kotlin and Jetpack Compose
+- Android `AudioRecord` for microphone capture
+- A foreground microphone service for monitoring
+- Local files and settings for saved recordings and preferences
+
+## Where I’m taking it
+
+I’m building SoundSentinel as a learning project while studying cybersecurity. I’m especially interested in how mobile permissions, background services, local data storage, and audio signal processing fit together. I’m continuing to test it on real phones; microphones and room acoustics vary, so detection behavior may need tuning for a particular device.
+
+Suggestions and constructive feedback are welcome.

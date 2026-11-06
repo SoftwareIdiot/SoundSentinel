@@ -31,7 +31,7 @@ Microphones and background-app rules vary between Android phones. Keep the foreg
 
 ## Install the APK
 
-Download [SoundSentinel v1.4.apk](https://github.com/SoftwareIdiot/SoundSentinel/releases/download/v1.4-background-access-20261106/SoundSentinel.v1.4.apk) from the final GitHub release. Open the downloaded file on Android and follow the install prompts. Android may ask you to allow your browser or Files app to install apps from that source. (GitHub replaces spaces in uploaded asset names with periods, so its filename is `SoundSentinel.v1.4.apk`.)
+Download [SoundSentinel v1.5.apk](https://github.com/SoftwareIdiot/SoundSentinel/releases/download/v1.5-compact-android-20261106/SoundSentinel.v1.5.apk) from the final GitHub release. Open the downloaded file on Android and follow the install prompts. Android may ask you to allow your browser or Files app to install apps from that source. (GitHub replaces spaces in uploaded asset names with periods, so its filename is `SoundSentinel.v1.5.apk`.)
 
 The app supports Android 8.0 (API 26) and newer. The app is designed to run offline after installation. Building from source may need internet access once to download Gradle dependencies.
 
@@ -75,3 +75,7 @@ Alerts are sent after a clip is saved, with a two-second guard against the phone
 Settings now offers a direct battery-exemption request and a dedicated notification-settings shortcut. Realme, Oppo, and OnePlus phones also get startup-manager shortcuts when their firmware exposes them. Startup screens cannot reliably select or toggle an individual app on every firmware; unsupported shortcuts report that limitation instead of silently opening App Info.
 
 The armed request is saved separately from the service process. Reopening the visible app resumes an interrupted requested session when microphone permission is available. Explicit Disarm clears the request. This improves recovery after process removal; it does not bypass vendor process killing or grant permissions without consent.
+
+## v1.5
+
+Shorter screens, manufacturer-aware background settings with Android battery-settings fallback, and fewer schedule calculations in the audio loop. Manufacturer shortcuts are candidates rather than guaranteed firmware support. Android 8.0+ remains the supported platform.

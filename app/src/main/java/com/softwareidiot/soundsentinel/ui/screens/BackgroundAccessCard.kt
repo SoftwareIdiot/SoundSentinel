@@ -40,31 +40,25 @@ fun BackgroundAccessCard() {
     }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Background access", color = TextPrimary, style = MaterialTheme.typography.titleMedium)
-        Text(if(exempt) "Battery exemption: allowed" else "Battery exemption: not allowed", color = if(exempt) CyanAccent else CoralPrimary)
+        Text(if(exempt) "Battery access: allowed" else "Battery access: restricted", color = if(exempt) CyanAccent else CoralPrimary)
         OutlinedButton(onClick = {
             if(exempt) launchSetting(context, Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
             else launchSetting(context,
                 Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + context.packageName)),
                 Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
-        }, modifier = Modifier.fillMaxWidth()) { Text(if(exempt) "Review battery exemption" else "Allow unrestricted battery use") }
+        }, modifier = Modifier.fillMaxWidth()) { Text(if(exempt) "Review battery access" else "Allow unrestricted battery use") }
         OutlinedButton(onClick = {
             launchSetting(context, Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName))
-        }, modifier = Modifier.fillMaxWidth()) { Text("Open SoundSentinel notifications") }
-        val maker = Build.MANUFACTURER.lowercase(java.util.Locale.ROOT)
-        if (maker in listOf("realme", "oppo", "oneplus")) {
-            OutlinedButton(onClick = {
-                val targets = listOf(
-                    "com.oplus.safecenter" to "com.oplus.safecenter.startupapp.StartupAppListActivity",
-                    "com.coloros.safecenter" to "com.coloros.safecenter.permission.startup.StartupAppListActivity",
-                    "com.coloros.safecenter" to "com.coloros.safecenter.startupapp.StartupAppListActivity")
-                val choices = targets.map { (pkg, activity) -> Intent().setComponent(ComponentName(pkg, activity))
-                    .putExtra("packageName", context.packageName).putExtra("package_name", context.packageName) }
-                if (!launchSetting(context, *choices.toTypedArray())) {
-                    Toast.makeText(context, "Realme startup shortcut unavailable. Search Settings for Auto launch and allow SoundSentinel.", Toast.LENGTH_LONG).show()
-                }
-            }, modifier = Modifier.fillMaxWidth()) { Text("Open Realme / ColorOS auto launch") }
-            Text("In the startup list, allow SoundSentinel. Realme versions may also require Allow background activity and locking the app in Recents. Android does not expose a universal shortcut for those controls.", color = TextSecondary)
-        }
-        Text("Granting access reduces battery restrictions; it cannot override Force Stop. If monitoring is interrupted, reopen the app to resume your armed session.", color = TextMuted)
+        }, modifier = Modifier.fillMaxWidth()) { Text("Notifications") }
+
+        OutlinedButton(onClick = {
+            val choices = com.softwareidiot.soundsentinel.logic.BackgroundSettingsTargets
+                .forManufacturer(Build.MANUFACTURER).map { (pkg, activity) ->
+                    Intent().setComponent(ComponentName(pkg, activity))
+                        .putExtra("packageName", context.packageName).putExtra("package_name", context.packageName)
+                } + Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+            launchSetting(context, *choices.toTypedArray())
+        }, modifier = Modifier.fillMaxWidth()) { Text("Background settings") }
+        Text("Phone controls vary. Force Stop can end monitoring.", color = TextMuted)
     }
 }

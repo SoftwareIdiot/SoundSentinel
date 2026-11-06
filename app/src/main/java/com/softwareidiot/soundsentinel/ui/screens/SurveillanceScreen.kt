@@ -214,8 +214,8 @@ fun SurveillanceScreen(
                 Text(status, color = TextPrimary, fontSize = 27.sp, fontWeight = FontWeight.Bold)
                 Text(when {
                     isRecording -> String.format(Locale.US, "%.1fs captured | %.1fs until save if quiet", recordingDuration, silenceCountdown)
-                    isArmed -> "Room noise is learned locally. Distinct events become saved clips."
-                    else -> "Arm once to listen with the screen off. Clips start automatically when an event is detected."
+                    isArmed -> "Only sound events are saved."
+                    else -> "Arm to listen and capture sound events."
                 }, color = TextSecondary, fontSize = 14.sp)
                 Button(onClick = {
                     if (isArmed || hasMicPermission) onToggleArmed()
@@ -255,7 +255,7 @@ fun SurveillanceScreen(
                     Text(String.format(Locale.US, "Input %.1f dBFS", currentDb), color = TextSecondary, fontSize = 12.sp)
                     Text("Gate $effectiveThreshold / 100", color = CyanAccent, fontSize = 12.sp)
                 }
-                Text("dBFS measures microphone signal, not calibrated room loudness.", color = TextMuted, fontSize = 11.sp)
+                Text("Microphone level (dBFS).", color = TextMuted, fontSize = 11.sp)
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -277,9 +277,9 @@ fun SurveillanceScreen(
                 Text("Background readiness", color = TextPrimary, fontWeight = FontWeight.Bold)
                 val pm = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
                 Text(if (pm.isIgnoringBatteryOptimizations(context.packageName)) "Battery: unrestricted" else
-                    "Battery: check restrictions for long sessions", color = TextSecondary, fontSize = 13.sp)
+                    "Battery: restricted", color = TextSecondary, fontSize = 13.sp)
                 Text(if (hasNotifPermission) "Monitoring notification enabled" else "Enable notifications to keep status visible", color = TextSecondary, fontSize = 13.sp)
-                Text("Swiping Recents keeps an active service. Force Stop, reboot, or manufacturer battery controls may stop it; open the app to arm again.",
+                Text("If interrupted, reopen to resume. Force Stop can end monitoring.",
                     color = TextMuted, fontSize = 12.sp)
                 TextButton(onClick = onOpenPreferences) { Text("Monitoring options & permissions", color = CyanAccent) }
             }

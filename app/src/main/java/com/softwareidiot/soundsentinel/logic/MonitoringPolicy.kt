@@ -12,6 +12,8 @@ object MonitoringPolicy {
     }
 
     fun canDetect(settings: CCTVSettings, now: Long = System.currentTimeMillis()): Boolean {
+        if (!settings.automaticDetectionEnabled) return false
+        if (!settings.monitoringWindowEnabled) return true
         val time = Calendar.getInstance().apply { timeInMillis = now }
         return settings.automaticDetectionEnabled && (!settings.monitoringWindowEnabled ||
             isInWindow(time.get(Calendar.HOUR_OF_DAY) * 60 + time.get(Calendar.MINUTE),

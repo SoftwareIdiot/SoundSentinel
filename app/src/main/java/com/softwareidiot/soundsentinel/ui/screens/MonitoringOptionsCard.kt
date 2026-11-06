@@ -23,7 +23,7 @@ fun MonitoringOptionsCard(settings: CCTVSettings, onUpdate: (CCTVSettings) -> Un
     Surface(shape = RoundedCornerShape(24.dp), color = DarkSurface) {
         Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Monitoring & alerts", color = TextPrimary, style = MaterialTheme.typography.titleMedium)
-            Text("Choose which saved events can alert you. Clips are still kept for every detected event.", color = TextSecondary, fontSize = 12.sp)
+            Text("Alerts for saved events.", color = TextSecondary, fontSize = 12.sp)
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 AlertProfile.entries.forEach { profile ->
                     FilterChip(selected = settings.alertProfile == profile,
@@ -31,7 +31,7 @@ fun MonitoringOptionsCard(settings: CCTVSettings, onUpdate: (CCTVSettings) -> Un
                         label = { Text(when(profile) { AlertProfile.SILENT -> "Silent"; AlertProfile.IMPORTANT -> "Important"; AlertProfile.ALL_EVENTS -> "Every event" }) })
                 }
             }
-            Text("Minimum time between alerts", color = TextSecondary, fontSize = 12.sp)
+            Text("Alert cooldown", color = TextSecondary, fontSize = 12.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(30, 60, 180).forEach { seconds ->
                     FilterChip(selected = settings.alertCooldownSeconds == seconds,
@@ -57,9 +57,9 @@ fun MonitoringOptionsCard(settings: CCTVSettings, onUpdate: (CCTVSettings) -> Un
                             settings.monitoringEndMinute / 60, settings.monitoringEndMinute % 60, true).show()
                     }) { Text("Until " + MonitoringPolicy.timeLabel(settings.monitoringEndMinute)) }
                 }
-                Text("Uses your phone's local time, including overnight windows. Matching times mean all day. Arm manually first; this cannot restart the microphone after Force Stop or reboot.", color = TextSecondary, fontSize = 12.sp)
+                Text("Local time. Arm first. Matching times mean all day.", color = TextSecondary, fontSize = 12.sp)
             }
-            Text("Alerts happen after a clip is saved. A two-second feedback guard prevents the phone's vibration or notification tone from triggering another clip.", color = TextMuted, fontSize = 12.sp)
+            Text("Alerts after saving; triggers pause for 2 seconds during feedback.", color = TextMuted, fontSize = 12.sp)
             BackgroundAccessCard()
         }
     }

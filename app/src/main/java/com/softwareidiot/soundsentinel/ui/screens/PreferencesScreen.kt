@@ -187,9 +187,9 @@ fun PreferencesScreen(
 
             Text(
                 text = if (settings.automaticDetectionEnabled) {
-                    "The gate adjusts to room noise automatically. No sensitivity slider; switch detection off to stop event clips while keeping live monitoring armed."
+                    "Adapts to room noise."
                 } else {
-                    "Live monitoring stays armed, but sound events will not start or extend recordings."
+                    "Live levels only; event capture is off."
                 },
                 color = TextSecondary,
                 fontSize = 11.sp,
@@ -245,7 +245,7 @@ fun PreferencesScreen(
             }
 
             Text(
-                text = "How long recording continues after the sound becomes quiet. Any new sound resets this countdown.",
+                text = "Save after this much quiet.",
                 color = TextSecondary,
                 fontSize = 11.sp
             )
@@ -387,7 +387,7 @@ fun PreferencesScreen(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Acoustic Signal Tagging", color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    Text("Automatically labels speech, footsteps, knocks, impacts & faint sounds", color = TextMuted, fontSize = 10.sp)
+                    Text("Local sound labels", color = TextMuted, fontSize = 10.sp)
                 }
                 Switch(
                     checked = settings.enableSignalAnalysis,
@@ -403,7 +403,7 @@ fun PreferencesScreen(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Alert Notifications", color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    Text("Notify when high-intensity sound events or storage limits occur", color = TextMuted, fontSize = 10.sp)
+                    Text("Saved-event and storage alerts", color = TextMuted, fontSize = 10.sp)
                 }
                 Switch(
                     checked = settings.enableNotifications,
@@ -419,7 +419,7 @@ fun PreferencesScreen(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Haptic Vibration", color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    Text("Gentle vibration pulse when a sound triggers recording", color = TextMuted, fontSize = 10.sp)
+                    Text("Vibrate after saving", color = TextMuted, fontSize = 10.sp)
                 }
                 Switch(
                     checked = settings.enableVibration,

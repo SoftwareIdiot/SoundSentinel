@@ -193,6 +193,9 @@ class AcousticMonitorService : Service() {
         var smoothedDb = -75.0
         var lastStatusUpdate = 0L
         var lastWaveSampleAt = 0L
+        var policySecond = Long.MIN_VALUE
+        var policySettings: com.softwareidiot.soundsentinel.data.model.CCTVSettings? = null
+        var policyAllowsDetection = false
 
         try {
             val (openedRecord, negotiatedRate, bufferBytes) = openBestAudioRecord(activeSampleRate)
@@ -240,6 +243,11 @@ class AcousticMonitorService : Service() {
 
                 val currentSettings = repository.settings.value
                 val postRollSec = currentSettings.postRollSeconds
+                if (now / 1000 != policySecond || currentSettings != policySettings) {
+                    policyAllowsDetection = MonitoringPolicy.canDetect(currentSettings, now)
+                    policySecond = now / 1000
+                    policySettings = currentSettings
+                }
 
                 val rmsScale = CctvLogic.mapDecibelsToScale(smoothedDb)
                 val peakScale = CctvLogic.mapDecibelsToScale(peakDb)
@@ -251,7 +259,7 @@ class AcousticMonitorService : Service() {
                     peakDb = peakDb,
                     crestDb = crestDb,
                     frameDurationMs = frameDurationMs,
-                    detectionEnabled = MonitoringPolicy.canDetect(currentSettings, now) && !repository.isAlertFeedbackActive(),
+                    detectionEnabled = policyAllowsDetection && !repository.isAlertFeedbackActive(),
                     clipActive = clipStream != null
                 )
                 noiseFloorDb = gate.noiseFloorDb

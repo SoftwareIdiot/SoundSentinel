@@ -60,9 +60,7 @@ fun MonitoringOptionsCard(settings: CCTVSettings, onUpdate: (CCTVSettings) -> Un
                 Text("Uses your phone's local time, including overnight windows. Matching times mean all day. Arm manually first; this cannot restart the microphone after Force Stop or reboot.", color = TextSecondary, fontSize = 12.sp)
             }
             Text("Alerts happen after a clip is saved. A two-second feedback guard prevents the phone's vibration or notification tone from triggering another clip.", color = TextMuted, fontSize = 12.sp)
-            TextButton(onClick = {
-                context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + context.packageName)))
-            }) { Text("Phone battery & permission settings", color = CyanAccent) }
+            BackgroundAccessCard()
         }
     }
 }

@@ -75,6 +75,11 @@ class MainActivity : ComponentActivity() {
         enableHighRefreshRate()
     }
 
+    override fun onPostResume() {
+        super.onPostResume()
+        com.softwareidiot.soundsentinel.service.AcousticMonitorService.resumeRequested(this)
+    }
+
     private fun enableHighRefreshRate() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             try {

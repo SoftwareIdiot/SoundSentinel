@@ -72,10 +72,13 @@ class AcousticMonitorService : Service() {
         val action = intent?.action ?: ACTION_START
 
         if (ACTION_STOP == action) {
+            setRequested(this, false)
             stopMonitoring()
             return START_NOT_STICKY
         }
 
+        if (intent == null && !isRequested(this)) { stopSelf(); return START_NOT_STICKY }
+        setRequested(this, true)
         try {
             startAsForeground()
         } catch (e: RuntimeException) {
@@ -592,7 +595,24 @@ class AcousticMonitorService : Service() {
         private val _liveState = MutableStateFlow(MonitorLiveState())
         val liveState: StateFlow<MonitorLiveState> = _liveState.asStateFlow()
 
+        private fun setRequested(context: Context, requested: Boolean) {
+            context.getSharedPreferences("monitor_session", Context.MODE_PRIVATE).edit().putBoolean("requested", requested).commit()
+        }
+        private fun isRequested(context: Context) =
+            context.getSharedPreferences("monitor_session", Context.MODE_PRIVATE).getBoolean("requested", false)
+
+        fun resumeRequested(context: Context) {
+            val granted = androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+            if (isRequested(context) && granted && !_liveState.value.isRunning) {
+                try { start(context) } catch (e: RuntimeException) {
+                    _liveState.value = MonitorLiveState(error = "Tap Arm to resume monitoring: " + e.message)
+                }
+            }
+        }
+
         fun start(context: Context) {
+            setRequested(context, true)
             val intent = Intent(context, AcousticMonitorService::class.java).apply {
                 action = ACTION_START
             }
@@ -604,6 +624,7 @@ class AcousticMonitorService : Service() {
         }
 
         fun stop(context: Context) {
+            setRequested(context, false)
             val intent = Intent(context, AcousticMonitorService::class.java).apply {
                 action = ACTION_STOP
             }

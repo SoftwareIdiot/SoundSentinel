@@ -31,7 +31,7 @@ Microphones and background-app rules vary between Android phones. Keep the foreg
 
 ## Install the APK
 
-Download [SoundSentinel v1.3.apk](https://github.com/SoftwareIdiot/SoundSentinel/releases/download/v1.3-offline-mobile-20261106/SoundSentinel.v1.3.apk) from the final GitHub release. Open the downloaded file on Android and follow the install prompts. Android may ask you to allow your browser or Files app to install apps from that source. (GitHub replaces spaces in uploaded asset names with periods, so its filename is `SoundSentinel.v1.3.apk`.)
+Download [SoundSentinel v1.4.apk](https://github.com/SoftwareIdiot/SoundSentinel/releases/download/v1.4-background-access-20261106/SoundSentinel.v1.4.apk) from the final GitHub release. Open the downloaded file on Android and follow the install prompts. Android may ask you to allow your browser or Files app to install apps from that source. (GitHub replaces spaces in uploaded asset names with periods, so its filename is `SoundSentinel.v1.4.apk`.)
 
 The app supports Android 8.0 (API 26) and newer. The app is designed to run offline after installation. Building from source may need internet access once to download Gradle dependencies.
 
@@ -69,3 +69,9 @@ Monitoring options include Silent, Important, and Every event alert profiles wit
 The existing microphone foreground service is configured to keep running when the activity is removed from Recents. Android Force Stop, reboot, revoked permissions, and manufacturer battery controls can still stop monitoring. Open the app to arm again in those cases. No service can promise uninterrupted microphone access on every Android device. The app supports Android 8.0 and newer, not iOS.
 
 Alerts are sent after a clip is saved, with a two-second guard against the phone's own notification or vibration triggering another recording. Short events in that guard can be missed. Audio trigger timing now uses elapsed audio duration instead of a fixed number of frames, so it stays consistent across microphone buffer sizes.
+
+## Background access in v1.4
+
+Settings now offers a direct battery-exemption request and a dedicated notification-settings shortcut. Realme, Oppo, and OnePlus phones also get startup-manager shortcuts when their firmware exposes them. Startup screens cannot reliably select or toggle an individual app on every firmware; unsupported shortcuts report that limitation instead of silently opening App Info.
+
+The armed request is saved separately from the service process. Reopening the visible app resumes an interrupted requested session when microphone permission is available. Explicit Disarm clears the request. This improves recovery after process removal; it does not bypass vendor process killing or grant permissions without consent.

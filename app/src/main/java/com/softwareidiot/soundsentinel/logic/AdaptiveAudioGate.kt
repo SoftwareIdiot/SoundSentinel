@@ -24,7 +24,7 @@ class AdaptiveAudioGate {
     private var ambientWindowMs = 0L
     private var elapsedMs = 0L
     private var lastFloorUpdateMs = 0L
-    private var consecutiveLoudFrames = 0
+    private var aboveGateMs = 0L
 
     var noiseFloorDb: Double = -62.0
         private set
@@ -79,13 +79,13 @@ class AdaptiveAudioGate {
         val aboveGate = smoothedDb >= activeGateDb
 
         if (detectionEnabled && !isCalibrating && aboveGate) {
-            consecutiveLoudFrames++
+            aboveGateMs = (aboveGateMs + frameMs).coerceAtMost(10_000L)
         } else {
-            consecutiveLoudFrames = 0
+            aboveGateMs = 0L
         }
 
-        val requiredAttackFrames = if (clipActive) REQUIRED_HOLD_FRAMES else REQUIRED_ATTACK_FRAMES
-        val sustainedEvent = consecutiveLoudFrames >= requiredAttackFrames
+        val requiredAttackMs = if (clipActive) REQUIRED_HOLD_MS else REQUIRED_ATTACK_MS
+        val sustainedEvent = aboveGateMs >= requiredAttackMs
         val transientEvent = isStrongTransient(rmsDb, peakDb, crestDb)
         val detected = detectionEnabled && !isCalibrating && (sustainedEvent || transientEvent)
 
@@ -129,7 +129,7 @@ class AdaptiveAudioGate {
         const val MIN_TRANSIENT_RMS_MARGIN_DB = 6.0
         const val MIN_TRANSIENT_PEAK_DB = -32.0
         const val RELEASE_HYSTERESIS_DB = 3.0
-        const val REQUIRED_ATTACK_FRAMES = 4
-        const val REQUIRED_HOLD_FRAMES = 2
+        const val REQUIRED_ATTACK_MS = 80L
+        const val REQUIRED_HOLD_MS = 40L
     }
 }

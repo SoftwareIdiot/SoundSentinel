@@ -31,7 +31,7 @@ Microphones and background-app rules vary between Android phones. Keep the foreg
 
 ## Install the APK
 
-Download [SoundSentinel v1.2.apk](https://github.com/SoftwareIdiot/SoundSentinel/releases/download/v1.2-adaptive-audio-20261104/SoundSentinel.v1.2.apk) from the final GitHub release. Open the downloaded file on Android and follow the install prompts. Android may ask you to allow your browser or Files app to install apps from that source. (GitHub replaces spaces in uploaded asset names with periods, so its filename is `SoundSentinel.v1.2.apk`.)
+Download [SoundSentinel v1.3.apk](https://github.com/SoftwareIdiot/SoundSentinel/releases/download/v1.3-offline-mobile-20261106/SoundSentinel.v1.3.apk) from the final GitHub release. Open the downloaded file on Android and follow the install prompts. Android may ask you to allow your browser or Files app to install apps from that source. (GitHub replaces spaces in uploaded asset names with periods, so its filename is `SoundSentinel.v1.3.apk`.)
 
 The app supports Android 8.0 (API 26) and newer. The app is designed to run offline after installation. Building from source may need internet access once to download Gradle dependencies.
 
@@ -59,3 +59,13 @@ The app supports Android 8.0 (API 26) and newer. The app is designed to run offl
 ## How I want to grow it
 
 I want to make event detection more dependable across different phones, understand false triggers and missed sounds better, and keep the recording and storage behavior easy to inspect. Feedback from testing in different rooms and on different devices is especially useful.
+
+## Offline tools in v1.3
+
+The monitor now uses a compact scrolling layout and bottom navigation. Activity shows daily saved-clip totals, an hourly chart, and a local event timeline. Clip details support private notes, and search includes those notes; use the Today filter to find recent recordings.
+
+Monitoring options include Silent, Important, and Every event alert profiles with a cooldown. A daily recording window can span midnight and uses the phone's local time. Arm the app first: the window gates event capture inside an active monitoring session, rather than starting microphone access from a background alarm.
+
+The existing microphone foreground service is configured to keep running when the activity is removed from Recents. Android Force Stop, reboot, revoked permissions, and manufacturer battery controls can still stop monitoring. Open the app to arm again in those cases. No service can promise uninterrupted microphone access on every Android device. The app supports Android 8.0 and newer, not iOS.
+
+Alerts are sent after a clip is saved, with a two-second guard against the phone's own notification or vibration triggering another recording. Short events in that guard can be missed. Audio trigger timing now uses elapsed audio duration instead of a fixed number of frames, so it stays consistent across microphone buffer sizes.

@@ -21,6 +21,7 @@ import com.softwareidiot.soundsentinel.data.model.CCTVEventType
 import com.softwareidiot.soundsentinel.data.repository.CctvRepository
 import com.softwareidiot.soundsentinel.logic.AdaptiveAudioGate
 import com.softwareidiot.soundsentinel.logic.CctvLogic
+import com.softwareidiot.soundsentinel.logic.MonitoringPolicy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -75,7 +76,13 @@ class AcousticMonitorService : Service() {
             return START_NOT_STICKY
         }
 
-        startAsForeground()
+        try {
+            startAsForeground()
+        } catch (e: RuntimeException) {
+            _liveState.value = MonitorLiveState(error = "Open SoundSentinel and arm again: ${e.message}")
+            stopSelf()
+            return START_NOT_STICKY
+        }
 
         if (running.compareAndSet(false, true)) {
             acquireWakeLock()
@@ -103,19 +110,9 @@ class AcousticMonitorService : Service() {
         return START_STICKY
     }
 
-    override fun onTaskRemoved(rootIntent: Intent?) {
-        if (running.get()) {
-            val restartIntent = Intent(applicationContext, AcousticMonitorService::class.java).apply {
-                action = ACTION_START
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                applicationContext.startForegroundService(restartIntent)
-            } else {
-                applicationContext.startService(restartIntent)
-            }
-        }
-        super.onTaskRemoved(rootIntent)
-    }
+    // The existing foreground service survives task removal; a fresh background
+    // microphone start can be rejected by Android permission rules.
+    override fun onTaskRemoved(rootIntent: Intent?) { super.onTaskRemoved(rootIntent) }
 
     private fun startAsForeground() {
         val notification = buildNotification(isRecording = false, sampleRate = repository.settings.value.audioQuality.sampleRate)
@@ -251,7 +248,7 @@ class AcousticMonitorService : Service() {
                     peakDb = peakDb,
                     crestDb = crestDb,
                     frameDurationMs = frameDurationMs,
-                    detectionEnabled = currentSettings.automaticDetectionEnabled,
+                    detectionEnabled = MonitoringPolicy.canDetect(currentSettings, now) && !repository.isAlertFeedbackActive(),
                     clipActive = clipStream != null
                 )
                 noiseFloorDb = gate.noiseFloorDb
@@ -283,7 +280,7 @@ class AcousticMonitorService : Service() {
                         quietDurationMs = 0L
                         newClipStarted = true
 
-                        repository.vibrateAlert()
+                        // Defer feedback until save to avoid vibrating into the microphone.
                         repository.logEvent(
                             CCTVEvent(
                                 id = UUID.randomUUID().toString(),
@@ -416,7 +413,8 @@ class AcousticMonitorService : Service() {
             } catch (ignored: Exception) {}
             audioRecord?.release()
 
-            if (running.getAndSet(false)) {
+            val shouldStop = running.getAndSet(false)
+            run {
                 releaseWakeLock()
                 _liveState.value = _liveState.value.copy(
                     isRunning = false,
@@ -427,7 +425,7 @@ class AcousticMonitorService : Service() {
                     currentDb = -80.0
                 )
                 stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
+                if (shouldStop) stopSelf()
             }
         }
     }
@@ -470,6 +468,7 @@ class AcousticMonitorService : Service() {
 
     private fun stopMonitoring() {
         running.set(false)
+        if (Thread.currentThread() != audioThread) audioThread?.join(800)
         releaseWakeLock()
         _liveState.value = _liveState.value.copy(
             isRunning = false,
@@ -576,6 +575,7 @@ class AcousticMonitorService : Service() {
 
     override fun onDestroy() {
         running.set(false)
+        if (Thread.currentThread() != audioThread) audioThread?.join(800)
         releaseWakeLock()
         super.onDestroy()
     }

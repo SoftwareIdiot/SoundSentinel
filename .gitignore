@@ -13,3 +13,9 @@ android/app/release/
 android/.gradle-user-home/
 .env*
 !.env.example
+
+.gradle/
+.kotlin/
+local.properties
+captures/
+.gradle-codex/

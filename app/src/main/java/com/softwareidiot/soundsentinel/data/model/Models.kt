@@ -88,6 +88,11 @@ data class AudioRecording(
 data class CCTVSettings(
     val isArmed: Boolean = false,
     val automaticDetectionEnabled: Boolean = true,
+    val monitoringWindowEnabled: Boolean = false,
+    val monitoringStartMinute: Int = 22 * 60,
+    val monitoringEndMinute: Int = 7 * 60,
+    val alertProfile: AlertProfile = AlertProfile.IMPORTANT,
+    val alertCooldownSeconds: Int = 60,
     val postRollSeconds: Int = 10, // Default 10s post-roll extension
     val audioQuality: AudioQualityPreset = AudioQualityPreset.STUDIO_44K,
     val storageQuotaMB: Int = 250, // Default 250 MB local quota
@@ -99,6 +104,9 @@ data class CCTVSettings(
     val enableVibration: Boolean = true,
     val enableSignalAnalysis: Boolean = true
 )
+
+@Serializable
+enum class AlertProfile { SILENT, IMPORTANT, ALL_EVENTS }
 
 @Serializable
 data class StorageStats(

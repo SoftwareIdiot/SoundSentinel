@@ -7,6 +7,10 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.SystemClock
+import android.app.PendingIntent
+import com.softwareidiot.soundsentinel.MainActivity
+import com.softwareidiot.soundsentinel.logic.AlertLimiter
 import android.os.Environment
 import android.os.StatFs
 import android.os.VibrationEffect
@@ -50,6 +54,10 @@ class CctvRepository(private val context: Context) {
         prettyPrint = false
         encodeDefaults = true
     }
+
+    private val alertLimiter = AlertLimiter()
+    @Volatile private var feedbackUntilMs = 0L
+    fun isAlertFeedbackActive(): Boolean = SystemClock.elapsedRealtime() < feedbackUntilMs
 
     private val scope = CoroutineScope(Dispatchers.IO)
 
@@ -176,7 +184,7 @@ class CctvRepository(private val context: Context) {
 
         val sorted = validRecordings.sortedByDescending { it.timestamp }
         _recordings.value = sorted
-        persistRecordingsMeta(sorted)
+        persistRecordingsMeta()
         recalculateStorage()
     }
 
@@ -288,7 +296,7 @@ class CctvRepository(private val context: Context) {
 
         val updatedRecordings = listOf(recording) + _recordings.value
         _recordings.value = updatedRecordings
-        persistRecordingsMeta(updatedRecordings)
+        persistRecordingsMeta()
         recalculateStorage()
 
         logEvent(
@@ -318,12 +326,15 @@ class CctvRepository(private val context: Context) {
                 )
             )
 
-            if (_settings.value.enableNotifications &&
-                peakScore >= 58 &&
-                (classification.threatLevel == ThreatLevel.HIGH || classification.threatLevel == ThreatLevel.CRITICAL)
-            ) {
-                sendThreatNotification(classification, peakScore)
-            }
+        }
+        val alert = classification ?: AcousticClassifier.classify(null, peakScore, avgScore, duration, triggersCount)
+        val options = _settings.value
+        if ((options.enableNotifications || options.enableVibration) &&
+            alertLimiter.accept(options.alertProfile, alert.threatLevel, peakScore,
+                SystemClock.elapsedRealtime(), options.alertCooldownSeconds)) {
+            feedbackUntilMs = SystemClock.elapsedRealtime() + 2_000L
+            if (options.enableNotifications) sendThreatNotification(alert, peakScore)
+            vibrateAlert()
         }
 
         recording
@@ -381,6 +392,12 @@ class CctvRepository(private val context: Context) {
         }
     }
 
+    fun updateNotes(id: String, notes: String) {
+        val updated = _recordings.value.map { if (it.id == id) it.copy(notes = notes.trim().take(2000).ifEmpty { null }) else it }
+        _recordings.value = updated
+        scope.launch { persistRecordingsMeta() }
+    }
+
     fun renameRecording(id: String, newTitle: String) {
         val trimmed = newTitle.trim().takeIf { it.isNotEmpty() }
         val updated = _recordings.value.map {
@@ -388,7 +405,7 @@ class CctvRepository(private val context: Context) {
         }
         _recordings.value = updated
         scope.launch {
-            persistRecordingsMeta(updated)
+            persistRecordingsMeta()
         }
     }
 
@@ -472,7 +489,7 @@ class CctvRepository(private val context: Context) {
         }
         _recordings.value = updated
         scope.launch {
-            persistRecordingsMeta(updated)
+            persistRecordingsMeta()
             recalculateStorage()
         }
     }
@@ -489,7 +506,7 @@ class CctvRepository(private val context: Context) {
         val updated = _recordings.value.filter { it.id != id }
         _recordings.value = updated
         scope.launch {
-            persistRecordingsMeta(updated)
+            persistRecordingsMeta()
             recalculateStorage()
         }
     }
@@ -506,7 +523,7 @@ class CctvRepository(private val context: Context) {
         val updated = _recordings.value.filter { it.isProtected }
         _recordings.value = updated
         scope.launch {
-            persistRecordingsMeta(updated)
+            persistRecordingsMeta()
             recalculateStorage()
         }
         logEvent(
@@ -537,7 +554,7 @@ class CctvRepository(private val context: Context) {
         }
         _recordings.value = updatedList
         scope.launch {
-            persistRecordingsMeta(updatedList)
+            persistRecordingsMeta()
         }
         logEvent(
             CCTVEvent(
@@ -566,7 +583,7 @@ class CctvRepository(private val context: Context) {
         }
         val updated = _recordings.value.filter { it.id !in idsToPrune }
         _recordings.value = updated
-        persistRecordingsMeta(updated)
+        persistRecordingsMeta()
         recalculateStorage()
 
         logEvent(
@@ -594,7 +611,7 @@ class CctvRepository(private val context: Context) {
             }
             val updated = _recordings.value.filter { it.id !in expiredIds }
             _recordings.value = updated
-            persistRecordingsMeta(updated)
+            persistRecordingsMeta()
             recalculateStorage()
             logEvent(
                 CCTVEvent(
@@ -631,13 +648,19 @@ class CctvRepository(private val context: Context) {
         }
     }
 
-    private fun persistRecordingsMeta(list: List<AudioRecording>) {
+    @Synchronized
+    private fun persistRecordingsMeta() {
+        val atomic = android.util.AtomicFile(recordingsMetaFile)
+        var output: java.io.FileOutputStream? = null
         try {
-            recordingsMetaFile.writeText(json.encodeToString(list))
+            output = atomic.startWrite()
+            output.write(json.encodeToString(_recordings.value).toByteArray(Charsets.UTF_8))
+            atomic.finishWrite(output)
         } catch (e: Exception) {
-            // ignore
+            if (output != null) atomic.failWrite(output)
         }
     }
+
 
     fun vibrateAlert() {
         if (!_settings.value.enableVibration) return
@@ -690,6 +713,9 @@ class CctvRepository(private val context: Context) {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
 
+        val open = PendingIntent.getActivity(context, 42,
+            Intent(context, MainActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        builder.setContentIntent(open)
         notificationManager.notify(7143, builder.build())
     }
 

@@ -138,6 +138,8 @@ fun PreferencesScreen(
             .testTag("preferences_screen"),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
+        MonitoringOptionsCard(settings, onUpdateSettings)
+
         // 1. Automatic Detection Toggle
         Column(
             modifier = Modifier
@@ -153,7 +155,7 @@ fun PreferencesScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         imageVector = Icons.Default.Tune,
                         contentDescription = "Automatic event detection",

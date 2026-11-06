@@ -1,6 +1,8 @@
 package com.softwareidiot.soundsentinel.ui.screens
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -95,6 +97,7 @@ fun RecordingsVaultScreen(
     onSetSpeed: (Float) -> Unit,
     onToggleProtect: (String) -> Unit,
     onRename: (String, String) -> Unit,
+    onNotes: (String, String) -> Unit,
     onExport: (AudioRecording) -> Unit,
     onShare: (AudioRecording) -> Unit,
     onDelete: (String) -> Unit,
@@ -106,6 +109,7 @@ fun RecordingsVaultScreen(
     var filterMode by remember { mutableStateOf("all") }
     var renameTarget by remember { mutableStateOf<AudioRecording?>(null) }
     var renameText by remember { mutableStateOf("") }
+    var notesText by remember { mutableStateOf("") }
 
     val filteredList = recordings.filter { r ->
         val tag = r.classification?.tag?.lowercase() ?: ""
@@ -115,6 +119,7 @@ fun RecordingsVaultScreen(
                 r.dateString.lowercase().contains(searchQuery.lowercase()) ||
                 r.id.lowercase().contains(searchQuery.lowercase()) ||
                 title.contains(searchQuery.lowercase()) ||
+                (r.notes ?: "").contains(searchQuery, ignoreCase = true) ||
                 tag.contains(searchQuery.lowercase()) ||
                 explanation.contains(searchQuery.lowercase())
 
@@ -122,6 +127,7 @@ fun RecordingsVaultScreen(
             "loud" -> r.classification?.threatLevel == ThreatLevel.HIGH ||
                     r.classification?.threatLevel == ThreatLevel.CRITICAL ||
                     r.peakDecibels >= 70
+            "today" -> java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).format(java.util.Date(r.timestamp)) == java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).format(java.util.Date())
             "protected" -> r.isProtected
             "voice" -> tag.contains("voice") || tag.contains("vocal") || tag.contains("speech")
             "faint" -> r.peakDecibels < 40 || tag.contains("faint") || tag.contains("quiet")
@@ -136,27 +142,20 @@ fun RecordingsVaultScreen(
             onDismissRequest = { renameTarget = null },
             containerColor = DarkSurface,
             title = {
-                Text("Rename Recording", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text("Clip details", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
             },
             text = {
-                OutlinedTextField(
-                    value = renameText,
-                    onValueChange = { renameText = it },
-                    placeholder = { Text("Enter custom clip title", color = TextMuted) },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = TextPrimary,
-                        unfocusedTextColor = TextPrimary,
-                        focusedBorderColor = CoralPrimary,
-                        unfocusedBorderColor = BorderColor
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedTextField(value = renameText, onValueChange = { renameText = it.take(120) },
+                        label = { Text("Clip title") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = notesText, onValueChange = { notesText = it.take(2000) },
+                        label = { Text("Private notes") }, minLines = 3, maxLines = 5, modifier = Modifier.fillMaxWidth())
+                }
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        renameTarget?.let { onRename(it.id, renameText) }
+                        renameTarget?.let { onRename(it.id, renameText); onNotes(it.id, notesText) }
                         renameTarget = null
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = CoralPrimary)
@@ -252,7 +251,7 @@ fun RecordingsVaultScreen(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
-            val chips = listOf(
+            val chips = listOf("today" to "Today",
                 "all" to "All Clips",
                 "loud" to "🚨 Loud / Impacts",
                 "faint" to "🔉 Faint Sounds",
@@ -337,6 +336,7 @@ fun RecordingsVaultScreen(
                         onToggleProtect = { onToggleProtect(rec.id) },
                         onStartRename = {
                             renameText = rec.customTitle ?: rec.classification?.tag ?: ""
+                            notesText = rec.notes ?: ""
                             renameTarget = rec
                         },
                         onExport = { onExport(rec) },
@@ -541,6 +541,8 @@ private fun RecordingCard(
             }
         }
 
+        recording.notes?.let { Text(it, color = TextSecondary, fontSize = 12.sp) }
+
         if (classification?.explanation != null) {
             Text(
                 text = classification.explanation,
@@ -555,10 +557,10 @@ private fun RecordingCard(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 UtilityChipButton(
                     icon = Icons.Default.Edit,
-                    label = "Rename",
+                    label = "Details",
                     onClick = onStartRename
                 )
                 UtilityChipButton(

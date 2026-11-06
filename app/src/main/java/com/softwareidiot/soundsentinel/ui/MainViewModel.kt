@@ -19,8 +19,9 @@ import kotlinx.coroutines.launch
 enum class CctvTab(val title: String, val subtitle: String) {
     SURVEILLANCE("Home • Audio Monitor", "Live acoustic detection & background control"),
     VAULT("Recordings Vault", "Play, seek, rename, or share saved audio clips"),
+    ACTIVITY("Activity", "Your local daily sound history"),
     STORAGE("Storage & Quota", "Manage vault capacity and circular retention"),
-    PREFERENCES("Preferences", "Auto/Manual detection, quality & permissions")
+    PREFERENCES("Preferences", "Detection, monitoring windows & alerts")
 }
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -80,6 +81,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun toggleProtect(id: String) {
         repository.toggleProtect(id)
     }
+
+    fun updateNotes(id: String, notes: String) { repository.updateNotes(id, notes) }
 
     fun renameRecording(id: String, newTitle: String) {
         repository.renameRecording(id, newTitle)

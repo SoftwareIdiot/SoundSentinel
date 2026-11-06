@@ -1,5 +1,15 @@
 package com.softwareidiot.soundsentinel
 
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Audiotrack
+import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material.icons.filled.Tune
+import com.softwareidiot.soundsentinel.ui.screens.ActivityScreen
 import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
@@ -98,6 +108,7 @@ fun SoundSentinelAppContent(viewModel: MainViewModel) {
     val activeTab by viewModel.activeTab.collectAsState()
     val settings by viewModel.settings.collectAsState()
     val recordings by viewModel.recordings.collectAsState()
+    val events by viewModel.events.collectAsState()
     val storageStats by viewModel.storageStats.collectAsState()
     val liveState by viewModel.liveMonitorState.collectAsState()
     val playbackState by viewModel.playbackState.collectAsState()
@@ -157,6 +168,17 @@ fun SoundSentinelAppContent(viewModel: MainViewModel) {
                     modifier = Modifier.statusBarsPadding()
                 )
             },
+            bottomBar = {
+                NavigationBar(containerColor = DarkBackground) {
+                    listOf(Triple(CctvTab.SURVEILLANCE, "Monitor", Icons.Default.GraphicEq),
+                        Triple(CctvTab.VAULT, "Clips", Icons.Default.Audiotrack),
+                        Triple(CctvTab.ACTIVITY, "Activity", Icons.Default.BarChart),
+                        Triple(CctvTab.PREFERENCES, "Settings", Icons.Default.Tune)).forEach { (tab, label, icon) ->
+                        NavigationBarItem(selected = activeTab == tab, onClick = { viewModel.setTab(tab) },
+                            icon = { Icon(icon, label) }, label = { Text(label) })
+                    }
+                }
+            },
             containerColor = DarkBackground
         ) { innerPadding ->
             Box(
@@ -207,6 +229,7 @@ fun SoundSentinelAppContent(viewModel: MainViewModel) {
                                 onSetSpeed = { viewModel.setPlaybackSpeed(it) },
                                 onToggleProtect = { viewModel.toggleProtect(it) },
                                 onRename = { id, title -> viewModel.renameRecording(id, title) },
+                                onNotes = { id, notes -> viewModel.updateNotes(id, notes) },
                                 onExport = { viewModel.exportRecording(it) },
                                 onShare = { viewModel.shareRecording(it) },
                                 onDelete = { viewModel.deleteRecording(it) },
@@ -214,6 +237,8 @@ fun SoundSentinelAppContent(viewModel: MainViewModel) {
                                 onReclassify = { viewModel.reclassifyRecording(it) }
                             )
                         }
+
+                        CctvTab.ACTIVITY -> ActivityScreen(recordings, events)
 
                         CctvTab.STORAGE -> {
                             StorageManagerScreen(
